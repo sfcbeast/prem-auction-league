@@ -764,21 +764,29 @@ function CountdownBar({ deadlineTs, now }) {
 ========================================================================= */
 function HomeScreen({ onCreate, onJoin }) {
   const [name, setName] = useState(localStorage.getItem(PERSONAL_NAME_KEY) || "");
+  const [showJoin, setShowJoin] = useState(false);
   const [codeInput, setCodeInput] = useState("");
-  const [mode, setMode] = useState("create");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const submit = async () => {
+  // Two distinct, single-purpose actions — no "pick a mode, then press a
+  // different button to actually go" step, which was confusing enough in
+  // an earlier version that a room could look like it never got created
+  // (the mode-select button and the real submit button looked almost
+  // identical). Create always runs immediately on its own click; Join
+  // reveals its own input + its own clearly-separate button.
+  const doCreate = async () => {
     if (!name.trim()) { setError("Enter a manager name first."); return; }
     setBusy(true); setError("");
+    try { await onCreate(name.trim()); } finally { setBusy(false); }
+  };
+  const doJoin = async () => {
+    if (!name.trim()) { setError("Enter a manager name first."); return; }
+    if (!codeInput.trim()) { setError("Enter a room code."); return; }
+    setBusy(true); setError("");
     try {
-      if (mode === "create") await onCreate(name.trim());
-      else {
-        if (!codeInput.trim()) { setError("Enter a room code."); setBusy(false); return; }
-        const ok = await onJoin(codeInput.trim().toUpperCase(), name.trim());
-        if (!ok) { setError("Room not found, or the auction already started."); setBusy(false); return; }
-      }
+      const ok = await onJoin(codeInput.trim().toUpperCase(), name.trim());
+      if (!ok) setError("Room not found, or the auction already started.");
     } finally { setBusy(false); }
   };
 
@@ -795,22 +803,31 @@ function HomeScreen({ onCreate, onJoin }) {
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sir Alex"
             className="w-full mt-1.5 mb-4 px-3 py-2.5 rounded-lg bg-[#070C16] border border-white/10 outline-none focus:border-[#E8B23D] text-sm" />
 
-          <div className="flex gap-2 mb-4">
-            <button onClick={() => setMode("create")} className={`flex-1 py-2 rounded-lg text-sm font-bold transition ${mode === "create" ? "bg-[#E8B23D] text-[#0A0F1A]" : "bg-white/5 text-white/70"}`}>Create Room</button>
-            <button onClick={() => setMode("join")} className={`flex-1 py-2 rounded-lg text-sm font-bold transition ${mode === "join" ? "bg-[#E8B23D] text-[#0A0F1A]" : "bg-white/5 text-white/70"}`}>Join Room</button>
-          </div>
-
-          {mode === "join" && (
-            <input value={codeInput} onChange={(e) => setCodeInput(e.target.value.toUpperCase())} placeholder="ROOM CODE" maxLength={5}
-              className="w-full mb-4 px-3 py-2.5 rounded-lg bg-[#070C16] border border-white/10 outline-none focus:border-[#E8B23D] text-sm font-mono tracking-[0.3em] text-center" />
-          )}
-
           {error && <div className="text-[#D64545] text-xs mb-3">{error}</div>}
 
-          <button onClick={submit} disabled={busy}
-            style={{ background: "#3FA796" }} className="w-full py-2.5 rounded-lg font-bold text-[#0A0F1A] active:scale-95 transition disabled:opacity-50">
-            {busy ? "…" : mode === "create" ? "Create & Enter Lobby" : "Join Lobby"}
+          <button onClick={doCreate} disabled={busy}
+            style={{ background: "#3FA796" }} className="w-full py-3 rounded-lg font-bold text-[#0A0F1A] active:scale-95 transition disabled:opacity-50">
+            {busy && !showJoin ? "Creating…" : "🏟 Create a New Room"}
           </button>
+
+          <div className="flex items-center gap-3 my-4">
+            <div className="flex-1 h-px bg-white/10" /><span className="text-[10px] uppercase opacity-40 font-bold">or</span><div className="flex-1 h-px bg-white/10" />
+          </div>
+
+          {!showJoin ? (
+            <button onClick={() => setShowJoin(true)} className="w-full py-2.5 rounded-lg font-bold text-sm border border-white/15 hover:bg-white/5 transition">
+              Join a Friend's Room
+            </button>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <input value={codeInput} onChange={(e) => setCodeInput(e.target.value.toUpperCase())} placeholder="ROOM CODE" maxLength={5} autoFocus
+                className="w-full px-3 py-2.5 rounded-lg bg-[#070C16] border border-white/10 outline-none focus:border-[#E8B23D] text-sm font-mono tracking-[0.3em] text-center" />
+              <button onClick={doJoin} disabled={busy}
+                style={{ background: "#E8B23D" }} className="w-full py-2.5 rounded-lg font-bold text-[#0A0F1A] active:scale-95 transition disabled:opacity-50">
+                {busy && showJoin ? "Joining…" : "Join Room →"}
+              </button>
+            </div>
+          )}
         </div>
         <p className="text-center text-[11px] opacity-40 mt-4">2-10 players · solo play adds an AI opponent automatically</p>
       </div>
