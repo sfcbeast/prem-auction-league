@@ -889,6 +889,19 @@ function TierBadge({ tier }) {
     </span>
   );
 }
+// Consistent branded panel-title treatment (small PL-purple accent bar)
+// used across every screen instead of each panel styling its own header.
+function SectionLabel({ children, className, right }) {
+  return (
+    <div className={`flex items-center justify-between ${className || ""}`}>
+      <div className="flex items-center gap-2 text-xs uppercase tracking-wide opacity-70 font-bold">
+        <span style={{ width: 3, height: 12, background: "#963CFF", borderRadius: 2 }} className="inline-block shrink-0" />
+        {children}
+      </div>
+      {right}
+    </div>
+  );
+}
 // A FUT-style trading card for the player currently up for auction —
 // tier-tinted gradient background and border glow, rating/position badge
 // in the top corner, a diagonal shine sweep on reveal. This is the one
@@ -1002,9 +1015,18 @@ function PlayerPhoto({ player, size, rounded }) {
 }
 function PlayerCard({ player, compact }) {
   if (!player) return null;
+  const tierColor = TIER_COLOR[player.tier];
   return (
     <div className="flex items-center gap-2">
-      <PlayerPhoto player={player} size={36} rounded />
+      <div className="relative shrink-0">
+        <div className="rounded-full" style={{ boxShadow: `0 0 0 2px ${tierColor}99` }}>
+          <PlayerPhoto player={player} size={36} rounded />
+        </div>
+        <div className="absolute -bottom-1 -right-1 rounded-full font-mono font-black text-[8px] flex items-center justify-center"
+          style={{ width: 15, height: 15, background: tierColor, color: "#0A0F1A", border: "1.5px solid #0A0F1A" }}>
+          {player.rating}
+        </div>
+      </div>
       <div className="min-w-0">
         <div className={`font-semibold truncate ${compact ? "text-xs" : "text-sm"}`}>{player.name}</div>
         <div className="text-[10px] opacity-60 truncate">{player.club} · {player.era}</div>
@@ -1210,7 +1232,7 @@ function LobbyScreen({ room, myId, onUpdateBudget, onSetFormation, onStart, onLe
           <div className="text-xs opacity-50 mt-1">Share this code so friends can join</div>
         </div>
         <div style={{ background: "#101A2E" }} className="rounded-2xl p-5 border border-white/5 mb-4">
-          <div className="text-xs uppercase tracking-wide opacity-60 font-bold mb-3">Managers ({room.players.length}/10)</div>
+          <SectionLabel className="mb-3">Managers ({room.players.length}/10)</SectionLabel>
           <div className="flex flex-col gap-2">
             {room.players.map((m) => {
               const fKey = (room.formations && room.formations[m.id]) || DEFAULT_FORMATION;
@@ -1226,7 +1248,7 @@ function LobbyScreen({ room, myId, onUpdateBudget, onSetFormation, onStart, onLe
           </div>
         </div>
         <div style={{ background: "#101A2E" }} className="rounded-2xl p-5 border border-white/5 mb-4">
-          <div className="text-xs uppercase tracking-wide opacity-60 font-bold mb-3">Your formation</div>
+          <SectionLabel className="mb-3">Your formation</SectionLabel>
           <div className="grid sm:grid-cols-2 gap-2">
             {Object.keys(FORMATIONS).map((fKey) => (
               <FormationCard key={fKey} fKey={fKey} selected={fKey === myFormation} onSelect={onSetFormation} />
@@ -1234,7 +1256,7 @@ function LobbyScreen({ room, myId, onUpdateBudget, onSetFormation, onStart, onLe
           </div>
         </div>
         <div style={{ background: "#101A2E" }} className="rounded-2xl p-5 border border-white/5 mb-4">
-          <div className="text-xs uppercase tracking-wide opacity-60 font-bold mb-2">Squad budget per manager</div>
+          <SectionLabel className="mb-2">Squad budget per manager</SectionLabel>
           <div className="flex items-center gap-3">
             <input type="range" min="200" max="900" step="25" value={budget} disabled={!isHost}
               onChange={(e) => setBudget(Number(e.target.value))} onMouseUp={() => isHost && onUpdateBudget(budget)} onTouchEnd={() => isHost && onUpdateBudget(budget)}
@@ -1423,7 +1445,7 @@ function AuctionScreen({ room, myId, onBid, onPass, onSkipPhase, onCloseRoom, no
           ) : null}
 
           <div className="mt-6">
-            <div className="text-xs uppercase opacity-50 tracking-wide mb-2">Recent lots</div>
+            <SectionLabel className="mb-2">Recent lots</SectionLabel>
             <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto pr-1">
               {room.soldLog.slice(0, 8).map((entry, i) => {
                 const p = PLAYERS_BY_ID[entry.footballerId];
@@ -1461,36 +1483,52 @@ function AuctionScreen({ room, myId, onBid, onPass, onSkipPhase, onCloseRoom, no
 /* =========================================================================
    LEAGUE SCREEN
 ========================================================================= */
+// Broadcast-style position marker — a real PL table colors the left edge
+// by European-qualification zone; here with 2-10 teams the only zone
+// that reliably means anything is "top of the table", so that's the one
+// treated specially (gold), with your own row always picked out in
+// purple regardless of position.
 function TableView({ room }) {
   const table = computeTable(room.players.map((p) => p.id), room.fixtures);
   const nameOf = (id) => room.players.find((m) => m.id === id)?.name || "?";
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-xs md:text-sm">
+      <table className="w-full text-xs md:text-sm border-separate" style={{ borderSpacing: 0 }}>
         <thead>
-          <tr className="text-left opacity-50 uppercase text-[10px]">
-            <th className="py-1.5 pr-2">#</th><th className="py-1.5 pr-2">Team</th>
+          <tr className="text-left opacity-50 uppercase text-[10px]" style={{ borderBottom: "2px solid #3D195B" }}>
+            <th className="py-1.5 pr-2 pl-2">#</th><th className="py-1.5 pr-2">Team</th>
             <th className="py-1.5 px-1 text-center">P</th><th className="py-1.5 px-1 text-center">W</th>
             <th className="py-1.5 px-1 text-center">D</th><th className="py-1.5 px-1 text-center">L</th>
             <th className="py-1.5 px-1 text-center">GF</th><th className="py-1.5 px-1 text-center">GA</th>
-            <th className="py-1.5 px-1 text-center">GD</th><th className="py-1.5 pl-2 text-center">Pts</th>
+            <th className="py-1.5 px-1 text-center">GD</th><th className="py-1.5 pl-2 pr-2 text-center">Pts</th>
           </tr>
         </thead>
         <tbody>
-          {table.map((row, i) => (
-            <tr key={row.id} className={`border-t border-white/5 ${row.id === room.__myId ? "bg-white/[0.05]" : ""}`}>
-              <td className="py-2 pr-2 font-mono opacity-60">{i + 1}</td>
-              <td className="py-2 pr-2 font-semibold">{nameOf(row.id)}</td>
-              <td className="text-center opacity-70">{row.played}</td>
-              <td className="text-center opacity-70">{row.won}</td>
-              <td className="text-center opacity-70">{row.draw}</td>
-              <td className="text-center opacity-70">{row.lost}</td>
-              <td className="text-center opacity-70">{row.gf}</td>
-              <td className="text-center opacity-70">{row.ga}</td>
-              <td className="text-center opacity-70">{row.gf - row.ga}</td>
-              <td className="text-center font-mono font-black" style={{ color: "#E8B23D" }}>{row.pts}</td>
-            </tr>
-          ))}
+          {table.map((row, i) => {
+            const isMe = row.id === room.__myId;
+            const isLeader = i === 0;
+            const edgeColor = isLeader ? "#E8B23D" : isMe ? "#963CFF" : "transparent";
+            return (
+              <tr key={row.id} style={{ background: i % 2 === 1 ? "rgba(255,255,255,0.02)" : "transparent" }}>
+                <td className="py-2 pl-2 pr-0" style={{ borderLeft: `3px solid ${edgeColor}` }}>
+                  <span className="font-mono opacity-70">{i + 1}</span>
+                </td>
+                <td className="py-2 pr-2 pl-2 font-semibold">
+                  {nameOf(row.id)}{isMe && <span className="ml-1.5 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full" style={{ background: "#963CFF33", color: "#C48CFF" }}>You</span>}
+                </td>
+                <td className="text-center opacity-70">{row.played}</td>
+                <td className="text-center opacity-70">{row.won}</td>
+                <td className="text-center opacity-70">{row.draw}</td>
+                <td className="text-center opacity-70">{row.lost}</td>
+                <td className="text-center opacity-70">{row.gf}</td>
+                <td className="text-center opacity-70">{row.ga}</td>
+                <td className="text-center opacity-70">{row.gf - row.ga}</td>
+                <td className="text-center pr-2">
+                  <span className="font-mono font-black" style={{ color: "#E8B23D" }}>{row.pts}</span>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -1583,20 +1621,16 @@ function LeagueScreen({ room, myId, onSimulate, onSimulateAll, onPlayAgain, onCl
       {champion && <ChampionBanner champion={room.players.find((m) => m.id === champion.id)} onPlayAgain={onPlayAgain} isHost={room.hostId === myId} />}
       <div className="grid md:grid-cols-[1fr_320px] gap-4">
         <div style={{ background: "#101A2E" }} className="rounded-2xl p-4 border border-white/5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-xs uppercase tracking-wide opacity-60 font-bold">League Table</div>
-            <div className="text-[11px] opacity-50">{room.fixtures.filter((f) => f.played).length}/{room.fixtures.length} played</div>
-          </div>
+          <SectionLabel className="mb-3" right={<span className="text-[11px] opacity-50">{room.fixtures.filter((f) => f.played).length}/{room.fixtures.length} played</span>}>League Table</SectionLabel>
           <TableView room={{ ...room, __myId: myId }} />
         </div>
         <div style={{ background: "#101A2E" }} className="rounded-2xl p-4 border border-white/5 flex flex-col">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-xs uppercase tracking-wide opacity-60 font-bold">My Squad</div>
+          <SectionLabel className="mb-2" right={
             <div className="flex gap-1">
               <button onClick={() => setSquadView("pitch")} className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full transition ${squadView === "pitch" ? "bg-[#E8B23D] text-[#0A0F1A]" : "opacity-50 hover:opacity-80"}`}>Pitch</button>
               <button onClick={() => setSquadView("list")} className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full transition ${squadView === "list" ? "bg-[#E8B23D] text-[#0A0F1A]" : "opacity-50 hover:opacity-80"}`}>List</button>
             </div>
-          </div>
+          }>My Squad</SectionLabel>
           {squadView === "pitch" ? (
             <div className="mb-3"><FormationPitch squad={mySquad} /></div>
           ) : (
@@ -1609,7 +1643,7 @@ function LeagueScreen({ room, myId, onSimulate, onSimulateAll, onPlayAgain, onCl
               Simulate All Remaining ({unplayed.length})
             </button>
           )}
-          <div className="text-xs uppercase tracking-wide opacity-60 font-bold mb-2">Fixtures</div>
+          <SectionLabel className="mb-2">Fixtures</SectionLabel>
           <div className="flex flex-col gap-1.5 overflow-y-auto pr-1" style={{ maxHeight: 320 }}>
             {room.fixtures.map((f) => <FixtureRow key={f.id} fixture={f} room={room} onSimulate={onSimulate} now={now} />)}
           </div>
@@ -1624,15 +1658,17 @@ function ChampionBanner({ champion, onPlayAgain, isHost }) {
     color: MANAGER_COLORS[i % MANAGER_COLORS.length],
   })), []);
   return (
-    <div style={{ background: "linear-gradient(135deg,#1a2440,#101A2E)" }} className="relative overflow-hidden rounded-2xl p-6 mb-4 border border-[#E8B23D]/40 text-center pal-pop">
+    <div style={{ background: "linear-gradient(135deg, #3D195B 0%, #1a1030 45%, #101A2E 100%)", boxShadow: "0 0 40px rgba(232,178,61,0.15)" }}
+      className="relative overflow-hidden rounded-2xl p-6 mb-4 border border-[#E8B23D]/50 text-center pal-pop">
       <div style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}>
         {confetti.map((c, i) => (
           <div key={i} className="pal-confetti" style={{ position: "absolute", left: `${c.left}%`, top: "-10%", width: 6, height: 10, background: c.color, animationDelay: `${c.delay}s`, animationDuration: `${c.dur}s` }} />
         ))}
       </div>
-      <div className="text-5xl mb-2">🏆</div>
-      <div className="font-display text-2xl md:text-3xl" style={{ color: "#E8B23D" }}>{champion?.name} WINS THE LEAGUE!</div>
-      <div className="opacity-60 text-sm mt-1">Top of the table after every fixture played.</div>
+      <div className="inline-block px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] mb-3 relative" style={{ background: "#E8B23D", color: "#0A0F1A" }}>Champions</div>
+      <div className="text-5xl mb-2 relative pal-card-glow">🏆</div>
+      <div className="font-display text-2xl md:text-3xl relative" style={{ color: "#E8B23D" }}>{champion?.name} WINS THE LEAGUE!</div>
+      <div className="opacity-60 text-sm mt-1 relative">Top of the table after every fixture played.</div>
       {isHost && (
         <button onClick={onPlayAgain} style={{ background: "#3FA796" }} className="mt-4 px-5 py-2 rounded-lg font-bold text-[#0A0F1A] active:scale-95">
           Play Again (new auction, same room)
