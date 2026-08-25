@@ -739,6 +739,43 @@ function advanceAuction(room) {
   const nextPlayerId = pool[nextIndex];
   return { ...updated, pool, lotIndex: nextIndex, currentLot: makeLot(nextPlayerId, nextIndex + 1) };
 }
+// Host-only "skip the rest of this position category" — resolves the
+// currently-open lot exactly as normal first (sold to whoever's leading,
+// else unsold; never voids an active bid), then fast-forwards past every
+// remaining lot of that same position straight to the first lot of the
+// next category. Skipped players aren't lost — they go into the unsold
+// pile, so they still get recycled near the end if the auction would
+// otherwise run dry before every squad is full.
+function skipCurrentPhase(room) {
+  if (!room.currentLot) return room;
+  let updated = resolveLot(room);
+  const skippedPos = PLAYERS_BY_ID[room.currentLot.footballerId].position;
+  let idx = room.lotIndex + 1;
+  const skipped = [];
+  while (idx < room.pool.length && PLAYERS_BY_ID[room.pool[idx]].position === skippedPos) {
+    skipped.push(room.pool[idx]);
+    idx++;
+  }
+  updated = { ...updated, unsoldIds: [...updated.unsoldIds, ...skipped] };
+  const allFull = updated.players.every((m) => squadIsComplete(updated.squads[m.id] || [], countsFor(updated, m.id)));
+  if (allFull) {
+    const teamIds = updated.players.map((p) => p.id);
+    return { ...updated, status: "league", currentLot: null, fixtures: generateFixtures(teamIds) };
+  }
+  let pool = room.pool;
+  if (idx >= pool.length) {
+    if (updated.unsoldIds.length > 0) {
+      pool = [...pool, ...shuffle(updated.unsoldIds)];
+      updated = { ...updated, unsoldIds: [] };
+    } else {
+      updated = forceFillIncompleteSquads(updated);
+      const teamIds = updated.players.map((p) => p.id);
+      return { ...updated, status: "league", currentLot: null, fixtures: generateFixtures(teamIds) };
+    }
+  }
+  const nextPlayerId = pool[idx];
+  return { ...updated, pool, lotIndex: idx, currentLot: makeLot(nextPlayerId, idx + 1) };
+}
 function lotShouldResolve(room) {
   const lot = room.currentLot;
   if (!lot) return false;
@@ -1071,7 +1108,7 @@ function StatBar({ label, value, highlight }) {
     </div>
   );
 }
-function AuctionScreen({ room, myId, onBid, onPass, now }) {
+function AuctionScreen({ room, myId, onBid, onPass, onSkipPhase, now }) {
   const [viewingId, setViewingId] = useState(null);
   const lot = room.currentLot;
   const player = lot ? PLAYERS_BY_ID[lot.footballerId] : null;
@@ -1091,14 +1128,22 @@ function AuctionScreen({ room, myId, onBid, onPass, now }) {
   const myFormationKey = (room.formations && room.formations[myId]) || DEFAULT_FORMATION;
   const suitability = suitabilityFor(player, myFormationKey);
   const viewingManager = viewingId ? room.players.find((m) => m.id === viewingId) : null;
+  const isHost = room.hostId === myId;
+  const nextPos = AUCTION_POSITION_ORDER[AUCTION_POSITION_ORDER.indexOf(player.position) + 1];
 
   return (
     <div className="min-h-full p-3 md:p-5 max-w-6xl mx-auto">
-      <div className="flex items-center justify-center mb-2">
+      <div className="flex items-center justify-center gap-2 mb-2">
         <span style={{ background: POS_COLOR[player.position] + "20", color: POS_COLOR[player.position], border: `1px solid ${POS_COLOR[player.position]}55` }}
           className="px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest">
           {POS_LABEL[player.position]}s Phase
         </span>
+        {isHost && (
+          <button onClick={onSkipPhase} title="Resolves this lot normally, then jumps straight past the rest of this position category"
+            className="text-[10px] font-bold uppercase tracking-wide px-2.5 py-1 rounded-full border border-white/15 opacity-70 hover:opacity-100 hover:bg-white/5 transition">
+            Skip to {nextPos ? POS_LABEL[nextPos] + "s" : "League"} →
+          </button>
+        )}
       </div>
       <div className="flex items-center justify-between mb-3 text-xs opacity-60">
         <div>Lot #{lot.lotNumber} of {room.pool.length}</div>
@@ -1541,6 +1586,13 @@ function PremAuctionLeague() {
       return { ...fresh, currentLot: { ...lot, passed: [...lot.passed, myId] } };
     });
   };
+  // Host-only: skip the rest of the current position category.
+  const skipPhase = async () => {
+    await commitWithRetry(roomKey(code), (fresh) => {
+      if (fresh.hostId !== myId || !fresh.currentLot) return null;
+      return skipCurrentPhase(fresh);
+    });
+  };
 
   const simulateOne = async (fixtureId) => {
     await commitWithRetry(roomKey(code), (fresh) => {
@@ -1585,7 +1637,7 @@ function PremAuctionLeague() {
     return <LobbyScreen room={room} myId={myId} onUpdateBudget={updateBudget} onSetFormation={setFormation} onStart={startAuction} onLeave={leaveRoom} />;
   }
   if (room.status === "auction") {
-    return <AuctionScreen room={room} myId={myId} onBid={placeBid} onPass={passLot} now={now} />;
+    return <AuctionScreen room={room} myId={myId} onBid={placeBid} onPass={passLot} onSkipPhase={skipPhase} now={now} />;
   }
   if (room.status === "league") {
     return <LeagueScreen room={room} myId={myId} onSimulate={simulateOne} onSimulateAll={simulateAll} onPlayAgain={playAgain} />;
