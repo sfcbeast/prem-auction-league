@@ -341,17 +341,56 @@ const STAT_PROFILES = {
   MID: { PAC: -1, ATT: -4, PAS: 9, DEF: 2 },
   FWD: { PAC: 6, ATT: 11, PAS: -3, DEF: -15 },
 };
-function detailedStats(player) {
+// Returns both the displayed stat values AND each stat's raw jitter
+// (deviation from what's "typical" for that position/rating). The jitter
+// is the individual-variation signal — two 85-rated defenders both show
+// DEF-profile-shaped stats, but one might have unusually good Pace for a
+// defender and one unusually poor; that's what formation suitability
+// below reads, not the absolute stat number (which is dominated by the
+// fixed position archetype offset and would otherwise make e.g. "any
+// forward" look pacy relative to their own rating, telling you nothing
+// about which forward is faster than another).
+function detailedStatsRaw(player) {
   const rand = seededRand(player.id * 9301 + 49297);
   const profile = STAT_PROFILES[player.position];
-  const stats = {};
+  const stats = {}, deviations = {};
   Object.keys(profile).forEach((k) => {
     const jitter = Math.round((rand() - 0.5) * 8);
+    deviations[k] = jitter;
     stats[k] = Math.max(35, Math.min(99, Math.round(player.rating + profile[k] + jitter)));
   });
-  return stats;
+  return { stats, deviations };
+}
+function detailedStats(player) {
+  return detailedStatsRaw(player).stats;
 }
 const STAT_LABEL = { REF: "Reflexes", HAN: "Handling", KIC: "Kicking", POS: "Positioning", PAC: "Pace", ATT: "Attack", PAS: "Passing", DEF: "Defending" };
+
+// Which sub-stat each line is actually judged on for formations that care
+// about player suitability (4-4-2 stays neutral by design — a true
+// "no bonus, no penalty" baseline). A player whose relevant stat runs hot
+// for their type gets a small boost playing that system; one who runs
+// cold gets a small penalty — same overall rating, different fit.
+const FORMATION_KEY_STAT = {
+  "4-3-3": { FWD: "PAC", MID: "ATT", DEF: "PAC" },
+  "5-3-2": { DEF: "DEF", MID: "DEF" },
+  "3-5-2": { MID: "PAS" },
+  "4-2-3-1": { MID: "PAS" },
+};
+function effectiveRating(player, formationKey) {
+  const keyStats = FORMATION_KEY_STAT[formationKey];
+  const statKey = keyStats && keyStats[player.position];
+  if (!statKey) return player.rating;
+  const { deviations } = detailedStatsRaw(player);
+  return player.rating + deviations[statKey];
+}
+function suitabilityFor(player, formationKey) {
+  const keyStats = FORMATION_KEY_STAT[formationKey];
+  const statKey = keyStats && keyStats[player.position];
+  if (!statKey) return null;
+  const { deviations } = detailedStatsRaw(player);
+  return { statKey, deviation: deviations[statKey] };
+}
 
 /* =========================================================================
    LEAGUE / MATCH SIMULATION
@@ -380,9 +419,9 @@ function lineRating(ratings) {
 }
 function teamRatings(squad, formationKey) {
   const gk = squad.find((p) => p.position === "GK");
-  const def = squad.filter((p) => p.position === "DEF").map((p) => p.rating);
-  const mid = squad.filter((p) => p.position === "MID").map((p) => p.rating);
-  const fwd = squad.filter((p) => p.position === "FWD").map((p) => p.rating);
+  const def = squad.filter((p) => p.position === "DEF").map((p) => effectiveRating(p, formationKey));
+  const mid = squad.filter((p) => p.position === "MID").map((p) => effectiveRating(p, formationKey));
+  const fwd = squad.filter((p) => p.position === "FWD").map((p) => effectiveRating(p, formationKey));
   const fwdLine = lineRating(fwd);
   const midLine = lineRating(mid);
   const defLine = lineRating(def);
@@ -970,11 +1009,13 @@ function ManagerCard({ manager, squad, budget, counts, isMe, currentBidderId, on
     </button>
   );
 }
-function StatBar({ label, value }) {
+function StatBar({ label, value, highlight }) {
   return (
     <div>
       <div className="flex justify-between text-[10px] mb-0.5">
-        <span className="opacity-60 uppercase font-bold tracking-wide">{label}</span>
+        <span className={`uppercase font-bold tracking-wide ${highlight ? "opacity-100" : "opacity-60"}`} style={highlight ? { color: "#E8B23D" } : undefined}>
+          {label}{highlight ? " ★" : ""}
+        </span>
         <span className="font-mono font-bold">{value}</span>
       </div>
       <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "#151E30" }}>
@@ -1000,6 +1041,8 @@ function AuctionScreen({ room, myId, onBid, onPass, now }) {
   const canIBid = !iPassed && !iAmLeading && canBid(mySquad, myBudget, player, askAmount, myCounts);
   const leader = lot.currentBidderId ? room.players.find((m) => m.id === lot.currentBidderId) : null;
   const stats = detailedStats(player);
+  const myFormationKey = (room.formations && room.formations[myId]) || DEFAULT_FORMATION;
+  const suitability = suitabilityFor(player, myFormationKey);
   const viewingManager = viewingId ? room.players.find((m) => m.id === viewingId) : null;
 
   return (
@@ -1021,8 +1064,15 @@ function AuctionScreen({ room, myId, onBid, onPass, now }) {
               <span className="font-mono text-xs opacity-50">Base {fmtM(player.basePrice)}</span>
             </div>
             <div className="grid grid-cols-2 gap-x-6 gap-y-2 w-full max-w-xs mt-3">
-              {Object.entries(stats).map(([k, v]) => <StatBar key={k} label={STAT_LABEL[k]} value={v} />)}
+              {Object.entries(stats).map(([k, v]) => <StatBar key={k} label={STAT_LABEL[k]} value={v} highlight={suitability && suitability.statKey === k} />)}
             </div>
+            {suitability && (
+              <div className="text-xs font-bold mt-1" style={{ color: suitability.deviation > 0 ? "#3FA796" : suitability.deviation < 0 ? "#D6455E" : "opacity-50" }}>
+                {suitability.deviation > 1 ? `✓ Strong fit for your ${FORMATIONS[myFormationKey].label} (+${suitability.deviation} ${STAT_LABEL[suitability.statKey]})`
+                  : suitability.deviation < -1 ? `⚠ Poor fit for your ${FORMATIONS[myFormationKey].label} (${suitability.deviation} ${STAT_LABEL[suitability.statKey]})`
+                  : `Neutral fit for your ${FORMATIONS[myFormationKey].label}`}
+              </div>
+            )}
           </div>
 
           <div className="mt-4 flex flex-col items-center gap-2">
