@@ -549,7 +549,7 @@ function simulateFixture(homeSquad, awaySquad, homeName, awayName, homeFormation
   // Structured version of the same events (log is prose for the expanded
   // commentary view; this is what the always-visible scorer line reads
   // from, so it doesn't need to regex-parse the prose back apart).
-  const scorers = events.map((e) => ({ minute: e.minute, side: e.side, name: e.scorer.name, position: e.scorer.position }));
+  const scorers = events.map((e) => ({ minute: e.minute, side: e.side, id: e.scorer.id, name: e.scorer.name, position: e.scorer.position }));
   return { homeGoals, awayGoals, log, scorers };
 }
 // Circle-method double round robin: every pair of teams meets twice (home
@@ -594,6 +594,71 @@ function computeTable(teamIds, fixtures) {
     else { h.draw++; a.draw++; h.pts += 1; a.pts += 1; }
   });
   return Object.values(table).sort((x, y) => y.pts - x.pts || (y.gf - y.ga) - (x.gf - x.ga) || y.gf - x.gf);
+}
+
+// Goals scored per player across every played fixture in the room — the
+// basis for the tournament's Star Player and for weighting Team of the
+// Tournament selection toward players who actually delivered, not just
+// whoever has the highest static rating.
+function computeGoalTally(fixtures) {
+  const tally = {};
+  fixtures.filter((f) => f.played).forEach((f) => {
+    (f.scorers || []).forEach((s) => {
+      if (s.id == null) return;
+      tally[s.id] = (tally[s.id] || 0) + 1;
+    });
+  });
+  return tally;
+}
+// Single standout of the tournament: most goals scored, ties broken by
+// rating. Only meaningful once at least one goal has actually gone in.
+function computeStarPlayer(room) {
+  const tally = computeGoalTally(room.fixtures || []);
+  const allPlayers = Object.values(room.squads || {}).flat();
+  let best = null;
+  allPlayers.forEach((p) => {
+    const goals = tally[p.id] || 0;
+    if (goals === 0) return;
+    if (!best || goals > best.goals || (goals === best.goals && p.rating > best.player.rating)) {
+      best = { player: p, goals };
+    }
+  });
+  return best;
+}
+// Team of the Tournament: pools every player from every squad, scores
+// each by rating plus a bonus for goals actually scored this tournament,
+// then — for every formation shape — sums the best available score per
+// position slot and keeps whichever formation yields the strongest
+// possible combined XI. That's "choose the formation as per best fit":
+// it's not a fixed choice, it's whichever shape actually accommodates
+// the deepest pool of standouts this particular tournament produced.
+function computeTeamOfTournament(room) {
+  const tally = computeGoalTally(room.fixtures || []);
+  const allPlayers = Object.values(room.squads || {}).flat();
+  if (allPlayers.length === 0) return null;
+  const scored = allPlayers.map((p) => ({ player: p, score: p.rating + (tally[p.id] || 0) * 2 }));
+  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  scored.forEach((s) => byPos[s.player.position].push(s));
+  Object.values(byPos).forEach((arr) => arr.sort((a, b) => b.score - a.score));
+
+  let bestFormation = null, bestSquad = null, bestTotal = -Infinity;
+  Object.keys(FORMATIONS).forEach((fKey) => {
+    const counts = FORMATIONS[fKey].counts;
+    const squad = [];
+    let total = 0;
+    let feasible = true;
+    Object.keys(counts).forEach((pos) => {
+      const need = counts[pos];
+      const pool = byPos[pos] || [];
+      if (pool.length < need) feasible = false;
+      pool.slice(0, need).forEach((s) => { squad.push(s.player); total += s.score; });
+    });
+    if (feasible && total > bestTotal) {
+      bestTotal = total; bestFormation = fKey; bestSquad = squad;
+    }
+  });
+  if (!bestFormation) return null;
+  return { formationKey: bestFormation, squad: bestSquad };
 }
 
 /* =========================================================================
@@ -1610,6 +1675,8 @@ function LeagueScreen({ room, myId, onSimulate, onSimulateAll, onPlayAgain, onCl
   const unplayed = room.fixtures.filter((f) => !f.played);
   const table = computeTable(room.players.map((p) => p.id), room.fixtures);
   const champion = unplayed.length === 0 ? table[0] : null;
+  const starPlayer = champion ? computeStarPlayer(room) : null;
+  const teamOfTournament = champion ? computeTeamOfTournament(room) : null;
   const mySquad = room.squads[myId] || [];
   const isHost = room.hostId === myId;
   return (
@@ -1619,6 +1686,8 @@ function LeagueScreen({ room, myId, onSimulate, onSimulateAll, onPlayAgain, onCl
         {isHost && <CloseRoomButton onClose={onCloseRoom} />}
       </div>
       {champion && <ChampionBanner champion={room.players.find((m) => m.id === champion.id)} onPlayAgain={onPlayAgain} isHost={room.hostId === myId} />}
+      {champion && <StarPlayerCard star={starPlayer} />}
+      {champion && <TeamOfTournament tot={teamOfTournament} />}
       <div className="grid md:grid-cols-[1fr_320px] gap-4">
         <div style={{ background: "#101A2E" }} className="rounded-2xl p-4 border border-white/5">
           <SectionLabel className="mb-3" right={<span className="text-[11px] opacity-50">{room.fixtures.filter((f) => f.played).length}/{room.fixtures.length} played</span>}>League Table</SectionLabel>
@@ -1665,8 +1734,11 @@ function ChampionBanner({ champion, onPlayAgain, isHost }) {
           <div key={i} className="pal-confetti" style={{ position: "absolute", left: `${c.left}%`, top: "-10%", width: 6, height: 10, background: c.color, animationDelay: `${c.delay}s`, animationDuration: `${c.dur}s` }} />
         ))}
       </div>
-      <div className="inline-block px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] mb-3 relative" style={{ background: "#E8B23D", color: "#0A0F1A" }}>Champions</div>
-      <div className="text-5xl mb-2 relative pal-card-glow">🏆</div>
+      <div className="inline-block px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] mb-1 relative" style={{ background: "#E8B23D", color: "#0A0F1A" }}>Champions</div>
+      <div className="relative flex justify-center">
+        <div style={{ position: "absolute", top: "50%", left: "50%", width: 180, height: 180, transform: "translate(-50%,-50%)", background: "radial-gradient(circle, rgba(232,178,61,0.35), transparent 70%)" }} className="pal-card-glow" />
+        <div className="relative text-7xl py-2" style={{ filter: "drop-shadow(0 6px 14px rgba(232,178,61,0.5))" }}>🏆</div>
+      </div>
       <div className="font-display text-2xl md:text-3xl relative" style={{ color: "#E8B23D" }}>{champion?.name} WINS THE LEAGUE!</div>
       <div className="opacity-60 text-sm mt-1 relative">Top of the table after every fixture played.</div>
       {isHost && (
@@ -1674,6 +1746,40 @@ function ChampionBanner({ champion, onPlayAgain, isHost }) {
           Play Again (new auction, same room)
         </button>
       )}
+    </div>
+  );
+}
+function StarPlayerCard({ star }) {
+  if (!star) return null;
+  const { player, goals } = star;
+  return (
+    <div className="relative overflow-hidden rounded-2xl p-4 mb-4 flex items-center gap-4 pal-pop"
+      style={{ background: "linear-gradient(135deg, #12433a 0%, #0a1412 80%)", border: "1px solid rgba(63,167,150,0.5)" }}>
+      <div className="rounded-full p-1 shrink-0" style={{ background: "radial-gradient(circle, rgba(63,167,150,0.45), transparent 72%)" }}>
+        <PlayerPhoto player={player} size={64} rounded />
+      </div>
+      <div className="text-left min-w-0">
+        <div className="text-[10px] font-black uppercase tracking-widest" style={{ color: "#3FA796" }}>⭐ Star Player of the Tournament</div>
+        <div className="font-display text-xl mt-0.5 truncate">{player.name}</div>
+        <div className="text-xs opacity-60">{player.club} · {goals} goal{goals !== 1 ? "s" : ""} scored</div>
+      </div>
+    </div>
+  );
+}
+// The pool of every player from every squad, reduced to whichever
+// formation shape lets the strongest possible combined XI actually fit —
+// see computeTeamOfTournament. Reuses FormationPitch so it shows up as
+// the same pitch-diagram style as "My Squad", not a second visual system.
+function TeamOfTournament({ tot }) {
+  if (!tot) return null;
+  const f = FORMATIONS[tot.formationKey];
+  return (
+    <div className="rounded-2xl p-4 mb-4" style={{ background: "#101A2E", border: "1px solid rgba(150,60,255,0.35)" }}>
+      <SectionLabel className="mb-1">Team of the Tournament</SectionLabel>
+      <div className="text-[11px] opacity-60 mb-3">
+        Best XI across every squad — best-fit formation: <span className="font-mono opacity-90">{f.label}</span> <span style={{ color: "#C48CFF" }}>({f.tag})</span>
+      </div>
+      <FormationPitch squad={tot.squad} />
     </div>
   );
 }
