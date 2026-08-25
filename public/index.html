@@ -324,6 +324,19 @@ function fmtM(n) {
 function shuffle(arr) {
   return [...arr].sort(() => Math.random() - 0.5);
 }
+// The auction runs in position categories — all goalkeepers first, then
+// defenders, then midfielders, then forwards (each block shuffled on its
+// own) — same structure as a real IPL-style auction going category by
+// category, rather than every position mixed into one random sequence.
+const AUCTION_POSITION_ORDER = ["GK", "DEF", "MID", "FWD"];
+function buildAuctionPool() {
+  let pool = [];
+  AUCTION_POSITION_ORDER.forEach((pos) => {
+    const ids = PLAYERS.filter((p) => p.position === pos).map((p) => p.id);
+    pool = pool.concat(shuffle(ids));
+  });
+  return pool;
+}
 function round1(n) {
   return Math.round(n * 10) / 10;
 }
@@ -1057,6 +1070,12 @@ function AuctionScreen({ room, myId, onBid, onPass, now }) {
 
   return (
     <div className="min-h-full p-3 md:p-5 max-w-6xl mx-auto">
+      <div className="flex items-center justify-center mb-2">
+        <span style={{ background: POS_COLOR[player.position] + "20", color: POS_COLOR[player.position], border: `1px solid ${POS_COLOR[player.position]}55` }}
+          className="px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest">
+          {POS_LABEL[player.position]}s Phase
+        </span>
+      </div>
       <div className="flex items-center justify-between mb-3 text-xs opacity-60">
         <div>Lot #{lot.lotNumber} of {room.pool.length}</div>
         <div>Your formation: <span className="font-mono opacity-90">{FORMATIONS[(room.formations && room.formations[myId]) || DEFAULT_FORMATION].label}</span></div>
@@ -1438,7 +1457,7 @@ function PremAuctionLeague() {
       remainingBudget[bot.id] = fresh.budget;
       formations[bot.id] = randomFormationKey();
     }
-    const pool = shuffle(PLAYERS.map((p) => p.id));
+    const pool = buildAuctionPool();
     const updated = {
       ...fresh, players, squads, remainingBudget, formations, status: "auction",
       pool, lotIndex: 0, currentLot: makeLot(pool[0], 1), soldLog: [], unsoldIds: [],
