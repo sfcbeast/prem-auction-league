@@ -1015,6 +1015,29 @@ function PlayerAuctionCard({ player }) {
     </div>
   );
 }
+// An original crest for this app — shield silhouette, the app's own
+// purple/gold, a star at the center. Deliberately NOT a reproduction of
+// the real Premier League's mark (their lion crest is a registered
+// trademark); this just borrows the same "official badge" visual
+// language the rest of the UI already leans on via color and type.
+function PALCrest({ size }) {
+  const s = size || 64;
+  return (
+    <svg width={s} height={s * 1.16} viewBox="0 0 100 116" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="palCrestFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#963CFF" />
+          <stop offset="100%" stopColor="#241033" />
+        </linearGradient>
+      </defs>
+      <path d="M50,4 L88,17 L88,52 C88,82 70,102 50,113 C30,102 12,82 12,52 L12,17 Z"
+        fill="url(#palCrestFill)" stroke="#E8B23D" strokeWidth="4" strokeLinejoin="round" />
+      <path d="M50,13 L80,24 L80,52 C80,76 65,93 50,102 C35,93 20,76 20,52 L20,24 Z"
+        fill="none" stroke="#E8B23D" strokeWidth="1" opacity="0.35" />
+      <path d="M50,32 L57,49 L75,49 L60,60 L66,78 L50,67 L34,78 L40,60 L25,49 L43,49 Z" fill="#E8B23D" />
+    </svg>
+  );
+}
 function ManagerAvatar({ manager, size }) {
   const color = MANAGER_COLORS[manager.colorIdx % MANAGER_COLORS.length];
   const dim = size || 32;
@@ -1226,7 +1249,7 @@ function HomeScreen({ onCreate, onJoin, closedMessage, onDismissClosedMessage })
       <div className="w-full max-w-md">
         <div className="text-center mb-8 relative">
           <div className="absolute left-1/2 top-1/2" style={{ transform: "translate(-50%,-50%)", width: 280, height: 280, background: "radial-gradient(circle, rgba(150,60,255,0.28), transparent 70%)", pointerEvents: "none" }} />
-          <div className="relative text-5xl mb-2">⚽</div>
+          <div className="relative flex justify-center mb-2"><PALCrest size={72} /></div>
           <div className="relative inline-block px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] mb-2" style={{ background: "#3D195B", color: "#EDEBE3" }}>Premier League Auction</div>
           <h1 className="relative font-hero text-3xl md:text-4xl" style={{ color: "#E8B23D" }}>PREM AUCTION LEAGUE</h1>
           <p className="relative opacity-60 text-sm mt-2">Bid for real Premier League legends 1992-present, build your XI, battle it out home &amp; away.</p>
