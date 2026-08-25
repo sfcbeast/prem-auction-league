@@ -23,6 +23,17 @@
   @keyframes pal-confetti { 0% { transform: translateY(-10vh) rotate(0deg); opacity: 1; } 100% { transform: translateY(112vh) rotate(360deg); opacity: 0.9; } }
   .pal-confetti { animation: pal-confetti linear forwards; }
   @keyframes pal-shimmer { 0% { background-position: -200px 0; } 100% { background-position: 200px 0; } }
+  /* Themed range slider — browsers render <input type="range"> with their
+     own native (usually blue) styling that can't be reached with
+     Tailwind utility classes, so it's the one control that needs real
+     CSS to match the rest of the dark/teal/gold palette. */
+  input[type="range"].pal-range { -webkit-appearance: none; appearance: none; height: 6px; border-radius: 999px; background: #151E30; outline: none; }
+  input[type="range"].pal-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #E8B23D; border: 3px solid #0A0F1A; cursor: pointer; box-shadow: 0 0 0 1px rgba(232,178,61,0.4); }
+  input[type="range"].pal-range::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #E8B23D; border: 3px solid #0A0F1A; cursor: pointer; box-shadow: 0 0 0 1px rgba(232,178,61,0.4); }
+  input[type="range"].pal-range::-moz-range-track { background: #151E30; height: 6px; border-radius: 999px; }
+  input[type="range"].pal-range:disabled::-webkit-slider-thumb { background: #4A4F5A; box-shadow: none; }
+  input[type="range"].pal-range:disabled::-moz-range-thumb { background: #4A4F5A; box-shadow: none; }
+  input[type="range"].pal-range:disabled { cursor: not-allowed; }
 </style>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -1157,7 +1168,7 @@ function LobbyScreen({ room, myId, onUpdateBudget, onSetFormation, onStart, onLe
           <div className="flex items-center gap-3">
             <input type="range" min="200" max="900" step="25" value={budget} disabled={!isHost}
               onChange={(e) => setBudget(Number(e.target.value))} onMouseUp={() => isHost && onUpdateBudget(budget)} onTouchEnd={() => isHost && onUpdateBudget(budget)}
-              className="flex-1" />
+              className="pal-range flex-1" />
             <div className="font-mono font-bold text-lg w-20 text-right" style={{ color: "#E8B23D" }}>{fmtM(budget)}</div>
           </div>
           {!isHost && <div className="text-[11px] opacity-50 mt-1">Only the host can change this.</div>}
@@ -1277,7 +1288,7 @@ function AuctionScreen({ room, myId, onBid, onPass, onSkipPhase, onCloseRoom, no
 
   return (
     <div className="min-h-full p-3 md:p-5 max-w-6xl mx-auto">
-      <div className="flex items-center justify-center gap-2 mb-2">
+      <div className="flex flex-wrap items-center justify-center gap-2 mb-2">
         <span style={{ background: POS_COLOR[player.position] + "20", color: POS_COLOR[player.position], border: `1px solid ${POS_COLOR[player.position]}55` }}
           className="px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest">
           {POS_LABEL[player.position]}s Phase
@@ -1289,10 +1300,10 @@ function AuctionScreen({ room, myId, onBid, onPass, onSkipPhase, onCloseRoom, no
           </button>
         )}
       </div>
-      <div className="flex items-center justify-between mb-3 text-xs opacity-60">
-        <div>Lot #{lot.lotNumber} of {room.pool.length}</div>
-        <div>Your formation: <span className="font-mono opacity-90">{FORMATIONS[(room.formations && room.formations[myId]) || DEFAULT_FORMATION].label}</span></div>
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mb-3 text-xs opacity-60">
+        <div className="shrink-0">Lot #{lot.lotNumber} of {room.pool.length}</div>
+        <div className="shrink-0">Formation: <span className="font-mono opacity-90">{FORMATIONS[(room.formations && room.formations[myId]) || DEFAULT_FORMATION].label}</span></div>
+        <div className="flex items-center gap-3 ml-auto shrink-0">
           <span className="font-mono">Room {room.code}</span>
           {isHost && <CloseRoomButton onClose={onCloseRoom} />}
         </div>
