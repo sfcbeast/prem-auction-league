@@ -21,11 +21,28 @@ app.get("/api/kv/:key", (req, res) => {
   res.json({ value: store.get(key) });
 });
 
+// Optional `expectedRev` turns this into an atomic compare-and-swap: the
+// read-and-compare happens synchronously (no `await` in between), so
+// Node's single-threaded event loop guarantees no other request can
+// interleave — two concurrent writers can no longer both "succeed" while
+// one silently clobbers the other (e.g. two players joining a room in
+// the same instant used to race a client-side GET-then-PUT check, and
+// the second write would just overwrite the first's addition).
 app.put("/api/kv/:key", (req, res) => {
   const key = req.params.key;
-  const { value } = req.body || {};
+  const { value, expectedRev } = req.body || {};
   if (typeof value !== "string") {
     return res.status(400).json({ error: "value must be a string" });
+  }
+  if (expectedRev !== undefined) {
+    const current = store.get(key);
+    let currentRev = null;
+    if (current !== undefined) {
+      try { currentRev = JSON.parse(current).rev; } catch { /* leave null */ }
+    }
+    if (currentRev !== expectedRev) {
+      return res.status(409).json({ error: "rev mismatch", currentRev });
+    }
   }
   store.set(key, value);
   touch(key);

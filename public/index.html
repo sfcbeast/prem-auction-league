@@ -571,21 +571,27 @@ async function storageGet(key, shared = true) {
     return r && r.value !== undefined ? JSON.parse(r.value) : null;
   } catch { return null; }
 }
-async function storageSet(key, value, shared = true) {
+async function storageSet(key, value, shared = true, expectedRev) {
   try {
-    if (!shared) { localStorage.setItem(key, JSON.stringify(value)); return; }
-    await fetch(`/api/kv/${encodeURIComponent(key)}`, {
+    if (!shared) { localStorage.setItem(key, JSON.stringify(value)); return true; }
+    const body = { value: JSON.stringify(value) };
+    if (expectedRev !== undefined) body.expectedRev = expectedRev;
+    const res = await fetch(`/api/kv/${encodeURIComponent(key)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: JSON.stringify(value) }),
+      body: JSON.stringify(body),
     });
-  } catch (e) { console.error("storage set failed", e); }
+    return res.ok;
+  } catch (e) { console.error("storage set failed", e); return false; }
 }
+// A single atomic PUT with the rev we expect to be overwriting, checked
+// server-side with no gap between the check and the write — replaces an
+// earlier GET-then-PUT version of this that had a real race window: two
+// concurrent callers could both pass the check and both write, with the
+// second silently clobbering the first (e.g. two players joining a room
+// in the same instant, one of them just vanishing with no error shown).
 async function commitIfRevMatches(key, fresh, updated) {
-  const check = await storageGet(key);
-  if (!check || check.rev !== fresh.rev) return false;
-  await storageSet(key, updated);
-  return true;
+  return await storageSet(key, updated, true, fresh.rev);
 }
 const roomKey = (code) => `pla-room-${code}`;
 const PERSONAL_ID_KEY = "pla-my-id";
@@ -1364,26 +1370,39 @@ function PremAuctionLeague() {
     setRoom(initial);
   };
 
+  // Retries on a genuine rev conflict (two people joining in the same
+  // instant) rather than surfacing it as an error — the atomic CAS on the
+  // server guarantees at most one writer wins each attempt, so re-reading
+  // the just-updated room and trying again immediately resolves it; a
+  // human shouldn't have to notice a collision happened at all.
   const joinRoom = async (joinCode, name) => {
-    const existing = await storageGet(roomKey(joinCode));
-    if (!existing || existing.status !== "lobby") return false;
-    if (existing.players.some((p) => p.id === myId)) {
-      persistActiveRoom(joinCode); setCode(joinCode); setRoom(existing); return true;
-    }
-    if (existing.players.length >= 10) return false;
     localStorage.setItem(PERSONAL_NAME_KEY, name);
-    const me = { id: myId, name, isAI: false, colorIdx: existing.players.length };
-    const updated = {
-      ...existing, rev: existing.rev + 1,
-      players: [...existing.players, me],
-      squads: { ...existing.squads, [myId]: [] },
-      remainingBudget: { ...existing.remainingBudget, [myId]: existing.budget },
-      formations: { ...existing.formations, [myId]: DEFAULT_FORMATION },
-    };
-    const ok = await commitIfRevMatches(roomKey(joinCode), existing, updated);
-    if (!ok) return false;
-    persistActiveRoom(joinCode); setCode(joinCode); setRoom(updated);
-    return true;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const existing = await storageGet(roomKey(joinCode));
+      if (!existing || existing.status !== "lobby") return false;
+      if (existing.players.some((p) => p.id === myId)) {
+        persistActiveRoom(joinCode); setCode(joinCode); setRoom(existing); return true;
+      }
+      if (existing.players.length >= 10) return false;
+      const me = { id: myId, name, isAI: false, colorIdx: existing.players.length };
+      const updated = {
+        ...existing, rev: existing.rev + 1,
+        players: [...existing.players, me],
+        squads: { ...existing.squads, [myId]: [] },
+        remainingBudget: { ...existing.remainingBudget, [myId]: existing.budget },
+        formations: { ...existing.formations, [myId]: DEFAULT_FORMATION },
+      };
+      const ok = await commitIfRevMatches(roomKey(joinCode), existing, updated);
+      if (ok) {
+        persistActiveRoom(joinCode); setCode(joinCode); setRoom(updated);
+        return true;
+      }
+      // Conflict — someone else wrote to the room between our read and
+      // write. Brief jittered backoff so simultaneous joiners don't just
+      // collide again on the next attempt, then retry from a fresh read.
+      await new Promise((r) => setTimeout(r, 80 + Math.random() * 120));
+    }
+    return false;
   };
 
   const updateBudget = async (budget) => {
