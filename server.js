@@ -1,5 +1,6 @@
 const express = require("express");
 const path = require("path");
+const fs = require("fs");
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -8,11 +9,47 @@ app.use(express.static(path.join(__dirname, "public")));
 // Simple in-memory key-value store. Mirrors the get/set/delete shape the
 // client used to talk to the Artifacts `window.storage` API, so the game
 // logic on the client barely had to change.
-const store = new Map();
-const lastTouched = new Map();
+//
+// Persisted to disk so active rooms survive a process restart — Render's
+// free tier spins the service down after ~15 min idle and restarts it on
+// the next request, which used to wipe every in-progress game with no
+// warning to the players. This does NOT survive a fresh deploy (Render
+// gives a new deploy a clean ephemeral disk), only same-instance restarts.
+const DATA_FILE = path.join(__dirname, "data.json");
+let store = new Map();
+let lastTouched = new Map();
+try {
+  if (fs.existsSync(DATA_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+    store = new Map(raw.store);
+    lastTouched = new Map(raw.lastTouched);
+    console.log(`Loaded ${store.size} persisted key(s) from disk`);
+  }
+} catch (e) {
+  console.error("Failed to load persisted data, starting fresh:", e.message);
+}
 
+let dirty = false;
 function touch(key) {
   lastTouched.set(key, Date.now());
+  dirty = true;
+}
+function persist() {
+  if (!dirty) return;
+  dirty = false;
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify({ store: [...store], lastTouched: [...lastTouched] }));
+  } catch (e) {
+    console.error("Failed to persist data:", e.message);
+  }
+}
+// Debounced rather than on every write — a bidding war can write several
+// times a second, and this store is small enough that a couple of
+// seconds of at-risk data on an ungraceful crash is an acceptable
+// tradeoff against constantly blocking on disk I/O.
+setInterval(persist, 2000);
+for (const sig of ["SIGTERM", "SIGINT"]) {
+  process.on(sig, () => { persist(); process.exit(0); });
 }
 
 app.get("/api/kv/:key", (req, res) => {
@@ -52,6 +89,7 @@ app.put("/api/kv/:key", (req, res) => {
 app.delete("/api/kv/:key", (req, res) => {
   store.delete(req.params.key);
   lastTouched.delete(req.params.key);
+  dirty = true;
   res.json({ ok: true });
 });
 
@@ -66,6 +104,7 @@ setInterval(() => {
     if (now - ts > MAX_AGE_MS) {
       store.delete(key);
       lastTouched.delete(key);
+      dirty = true;
     }
   }
 }, 60 * 60 * 1000);
