@@ -253,6 +253,15 @@ PLAYERS.forEach((p) => (PLAYERS_BY_ID[p.id] = p));
 const SQUAD_SIZE = 11;
 const MIN_PRICE_FLOOR = 1.5;
 const LOT_DURATION_MS = 8000;
+// A "live" match takes this long to play out on screen — 90 game-minutes
+// compressed into real seconds — rather than jumping straight to the
+// final score. The result itself is decided instantly and stored right
+// away (no re-simulation, no race risk); every viewer's clock reads off
+// the SAME stored `liveStartedAt` timestamp, so anyone looking at the
+// fixture sees the same goals land at the same real moments without any
+// server push — just elapsed-time math against a shared start point.
+const LIVE_MATCH_MS = 13500;
+const MS_PER_GAME_MINUTE = LIVE_MATCH_MS / 90;
 
 // Each manager locks in a formation before the auction starts, which sets
 // the EXACT position shape their 11 must fill (not just minimums — a
@@ -499,7 +508,11 @@ function simulateFixture(homeSquad, awaySquad, homeName, awayName, homeFormation
   });
   if (!events.length) log.push("A goalless stalemate — both defenses held firm.");
   log.push(`Full time: ${homeName} ${homeGoals} - ${awayGoals} ${awayName}`);
-  return { homeGoals, awayGoals, log };
+  // Structured version of the same events (log is prose for the expanded
+  // commentary view; this is what the always-visible scorer line reads
+  // from, so it doesn't need to regex-parse the prose back apart).
+  const scorers = events.map((e) => ({ minute: e.minute, side: e.side, name: e.scorer.name, position: e.scorer.position }));
+  return { homeGoals, awayGoals, log, scorers };
 }
 // Circle-method double round robin: every pair of teams meets twice (home
 // & away), matching a real league season rather than a knockout bracket.
@@ -920,6 +933,78 @@ function PlayerCard({ player, compact }) {
     </div>
   );
 }
+// A pitch-diagram view of a squad, grouped into rows by position (FWD at
+// the top nearest "goal", GK at the bottom). Tapping two players in the
+// SAME row swaps their left-right slot — purely a per-viewer display
+// preference (never touches room state or the match engine, which only
+// ever cares about each line's aggregate rating, not slot order), so it
+// resets on reload and isn't synced to anyone else.
+function FormationPitch({ squad }) {
+  const byPos = useMemo(() => {
+    const g = { GK: [], DEF: [], MID: [], FWD: [] };
+    squad.forEach((p) => g[p.position].push(p));
+    return g;
+  }, [squad]);
+  const [order, setOrder] = useState(() => ({
+    GK: byPos.GK.map((p) => p.id), DEF: byPos.DEF.map((p) => p.id),
+    MID: byPos.MID.map((p) => p.id), FWD: byPos.FWD.map((p) => p.id),
+  }));
+  const squadKey = squad.map((p) => p.id).join(",");
+  useEffect(() => {
+    setOrder({
+      GK: byPos.GK.map((p) => p.id), DEF: byPos.DEF.map((p) => p.id),
+      MID: byPos.MID.map((p) => p.id), FWD: byPos.FWD.map((p) => p.id),
+    });
+    // eslint-disable-next-line
+  }, [squadKey]);
+  const [selected, setSelected] = useState(null);
+  const byId = useMemo(() => { const m = {}; squad.forEach((p) => (m[p.id] = p)); return m; }, [squad]);
+
+  const swap = (pos, id) => {
+    if (selected && selected.pos === pos && selected.id !== id) {
+      setOrder((o) => {
+        const arr = [...o[pos]];
+        const i1 = arr.indexOf(selected.id), i2 = arr.indexOf(id);
+        [arr[i1], arr[i2]] = [arr[i2], arr[i1]];
+        return { ...o, [pos]: arr };
+      });
+      setSelected(null);
+    } else {
+      setSelected({ pos, id });
+    }
+  };
+
+  const Row = ({ pos }) => (
+    <div className="flex justify-center gap-4">
+      {(order[pos] || []).map((id) => {
+        const p = byId[id];
+        if (!p) return null;
+        const isSel = selected && selected.pos === pos && selected.id === id;
+        return (
+          <button key={id} onClick={() => swap(pos, id)}
+            className="flex flex-col items-center gap-1 transition active:scale-95" title="Tap another player in this row to swap slots">
+            <div className={`rounded-full ${isSel ? "ring-2 ring-offset-2" : ""}`} style={isSel ? { boxShadow: "0 0 0 2px #E8B23D", borderRadius: "9999px" } : undefined}>
+              <PlayerPhoto player={p} size={46} rounded />
+            </div>
+            <span className="text-[9px] font-bold max-w-[62px] truncate text-white" style={{ textShadow: "0 1px 2px rgba(0,0,0,0.8)" }}>{p.name.split(" ").pop()}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  return (
+    <div style={{ background: "radial-gradient(ellipse at center, #0f5a34, #0a3d24)" }} className="rounded-xl p-4 relative overflow-hidden">
+      <div style={{ position: "absolute", inset: 10, border: "2px solid rgba(255,255,255,0.18)", borderRadius: 10 }} />
+      <div style={{ position: "absolute", left: "50%", top: 10, bottom: 10, width: 2, background: "rgba(255,255,255,0.18)", transform: "translateX(-50%)" }} />
+      <div style={{ position: "absolute", left: "50%", top: "50%", width: 70, height: 70, border: "2px solid rgba(255,255,255,0.18)", borderRadius: "50%", transform: "translate(-50%,-50%)" }} />
+      <div className="relative flex flex-col gap-5 py-3">
+        <Row pos="FWD" /><Row pos="MID" /><Row pos="DEF" /><Row pos="GK" />
+      </div>
+      <div className="relative text-center text-[10px] opacity-70 mt-2">Tap two players in the same row to swap their slots</div>
+    </div>
+  );
+}
 function CountdownBar({ deadlineTs, now }) {
   const total = LOT_DURATION_MS;
   const left = Math.max(0, deadlineTs - now);
@@ -1336,17 +1421,34 @@ function TableView({ room }) {
     </div>
   );
 }
-function FixtureRow({ fixture, room, onSimulate }) {
+// While a fixture is within LIVE_MATCH_MS of its stored liveStartedAt,
+// every viewer independently computes the same "current minute" from
+// elapsed time against that shared timestamp and reveals goals as their
+// minute is reached — no server push needed, and anyone who opens the
+// fixture mid-match sees it at the correct live minute, not from the
+// start. Once elapsed time passes LIVE_MATCH_MS it just renders the
+// final state, same as before this feature existed.
+function FixtureRow({ fixture, room, onSimulate, now }) {
   const home = room.players.find((m) => m.id === fixture.home);
   const away = room.players.find((m) => m.id === fixture.away);
   const [open, setOpen] = useState(false);
+
+  const elapsedMs = fixture.liveStartedAt != null ? now - fixture.liveStartedAt : null;
+  const isLive = fixture.played && elapsedMs != null && elapsedMs < LIVE_MATCH_MS;
+  const liveMinute = isLive ? Math.min(90, Math.max(0, Math.floor(elapsedMs / MS_PER_GAME_MINUTE))) : null;
+  const allScorers = fixture.scorers || [];
+  const visibleScorers = isLive ? allScorers.filter((s) => s.minute <= liveMinute) : allScorers;
+  const homeGoalsShown = isLive ? visibleScorers.filter((s) => s.side === "home").length : fixture.homeGoals;
+  const awayGoalsShown = isLive ? visibleScorers.filter((s) => s.side === "away").length : fixture.awayGoals;
+
   return (
     <div className="bg-white/[0.03] rounded-lg px-3 py-2">
       <div className="flex items-center gap-2 text-sm">
         <span className="flex-1 text-right font-semibold truncate">{home?.name}</span>
         {fixture.played ? (
-          <button onClick={() => setOpen((o) => !o)} className="font-mono font-black px-2" style={{ color: "#E8B23D" }}>
-            {fixture.homeGoals} - {fixture.awayGoals}
+          <button onClick={() => !isLive && setOpen((o) => !o)} className="font-mono font-black px-2 flex items-center gap-1.5" style={{ color: "#E8B23D" }}>
+            {isLive && <span className="w-1.5 h-1.5 rounded-full pal-pulse" style={{ background: "#D64545" }} />}
+            {homeGoalsShown} - {awayGoalsShown}
           </button>
         ) : (
           <span className="opacity-40 font-mono px-2">vs</span>
@@ -1357,8 +1459,32 @@ function FixtureRow({ fixture, room, onSimulate }) {
             Simulate
           </button>
         )}
+        {isLive && <span className="font-mono text-[10px] font-bold shrink-0" style={{ color: "#D64545" }}>{liveMinute}'</span>}
       </div>
-      {open && fixture.played && (
+      {isLive ? (
+        <div className="flex flex-col gap-0.5 mt-1 pl-1 text-[10px]">
+          {visibleScorers.length === 0 && <span className="opacity-50 italic">Kick-off…</span>}
+          {visibleScorers.map((s, i) => (
+            <span key={i} className={i === visibleScorers.length - 1 ? "font-bold opacity-100" : "opacity-55"}>
+              ⚽ {s.minute}' {s.name} <span className="opacity-70">({s.side === "home" ? home?.name : away?.name})</span>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <>
+          {fixture.played && allScorers.length > 0 && (
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 pl-1 text-[10px] opacity-70">
+              {allScorers.map((s, i) => (
+                <span key={i}>⚽ {s.minute}' {s.name} <span className="opacity-50">({s.side === "home" ? home?.name : away?.name})</span></span>
+              ))}
+            </div>
+          )}
+          {fixture.played && allScorers.length === 0 && (
+            <div className="text-[10px] opacity-40 mt-1 pl-1">A goalless draw — both defenses held firm.</div>
+          )}
+        </>
+      )}
+      {open && fixture.played && !isLive && (
         <div className="mt-2 pl-2 border-l-2 border-white/10 flex flex-col gap-0.5 text-[11px] opacity-70">
           {fixture.log.map((l, i) => <div key={i}>{l}</div>)}
         </div>
@@ -1366,7 +1492,8 @@ function FixtureRow({ fixture, room, onSimulate }) {
     </div>
   );
 }
-function LeagueScreen({ room, myId, onSimulate, onSimulateAll, onPlayAgain, onCloseRoom }) {
+function LeagueScreen({ room, myId, onSimulate, onSimulateAll, onPlayAgain, onCloseRoom, now }) {
+  const [squadView, setSquadView] = useState("pitch");
   const unplayed = room.fixtures.filter((f) => !f.played);
   const table = computeTable(room.players.map((p) => p.id), room.fixtures);
   const champion = unplayed.length === 0 ? table[0] : null;
@@ -1388,10 +1515,20 @@ function LeagueScreen({ room, myId, onSimulate, onSimulateAll, onPlayAgain, onCl
           <TableView room={{ ...room, __myId: myId }} />
         </div>
         <div style={{ background: "#101A2E" }} className="rounded-2xl p-4 border border-white/5 flex flex-col">
-          <div className="text-xs uppercase tracking-wide opacity-60 font-bold mb-2">My Squad</div>
-          <div className="flex flex-col gap-1.5 overflow-y-auto max-h-56 pr-1 mb-3">
-            {mySquad.map((p) => <PlayerCard key={p.id} player={p} compact />)}
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs uppercase tracking-wide opacity-60 font-bold">My Squad</div>
+            <div className="flex gap-1">
+              <button onClick={() => setSquadView("pitch")} className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full transition ${squadView === "pitch" ? "bg-[#E8B23D] text-[#0A0F1A]" : "opacity-50 hover:opacity-80"}`}>Pitch</button>
+              <button onClick={() => setSquadView("list")} className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full transition ${squadView === "list" ? "bg-[#E8B23D] text-[#0A0F1A]" : "opacity-50 hover:opacity-80"}`}>List</button>
+            </div>
           </div>
+          {squadView === "pitch" ? (
+            <div className="mb-3"><FormationPitch squad={mySquad} /></div>
+          ) : (
+            <div className="flex flex-col gap-1.5 overflow-y-auto max-h-56 pr-1 mb-3">
+              {mySquad.map((p) => <PlayerCard key={p.id} player={p} compact />)}
+            </div>
+          )}
           {unplayed.length > 0 && (
             <button onClick={onSimulateAll} style={{ background: "#E8B23D" }} className="w-full py-2 rounded-lg font-bold text-[#0A0F1A] active:scale-95 mb-3">
               Simulate All Remaining ({unplayed.length})
@@ -1399,7 +1536,7 @@ function LeagueScreen({ room, myId, onSimulate, onSimulateAll, onPlayAgain, onCl
           )}
           <div className="text-xs uppercase tracking-wide opacity-60 font-bold mb-2">Fixtures</div>
           <div className="flex flex-col gap-1.5 overflow-y-auto pr-1" style={{ maxHeight: 320 }}>
-            {room.fixtures.map((f) => <FixtureRow key={f.id} fixture={f} room={room} onSimulate={onSimulate} />)}
+            {room.fixtures.map((f) => <FixtureRow key={f.id} fixture={f} room={room} onSimulate={onSimulate} now={now} />)}
           </div>
         </div>
       </div>
@@ -1693,19 +1830,24 @@ function PremAuctionLeague() {
       const awayM = fresh.players.find((m) => m.id === fixture.away);
       const result = simulateFixture(fresh.squads[fixture.home] || [], fresh.squads[fixture.away] || [], homeM.name, awayM.name,
         fresh.formations[fixture.home], fresh.formations[fixture.away]);
-      const fixtures = fresh.fixtures.map((f) => f.id === fixtureId ? { ...f, played: true, homeGoals: result.homeGoals, awayGoals: result.awayGoals, log: result.log } : f);
+      const liveStartedAt = Date.now();
+      const fixtures = fresh.fixtures.map((f) => f.id === fixtureId ? { ...f, played: true, homeGoals: result.homeGoals, awayGoals: result.awayGoals, log: result.log, scorers: result.scorers, liveStartedAt } : f);
       return { ...fresh, fixtures };
     });
   };
   const simulateAll = async () => {
     await commitWithRetry(roomKey(code), (fresh) => {
+      // Same start timestamp for every fixture in this batch — a full
+      // round kicking off together, same as real matchdays, and it means
+      // several live tickers animate in parallel rather than staggered.
+      const liveStartedAt = Date.now();
       const fixtures = fresh.fixtures.map((f) => {
         if (f.played) return f;
         const homeM = fresh.players.find((m) => m.id === f.home);
         const awayM = fresh.players.find((m) => m.id === f.away);
         const result = simulateFixture(fresh.squads[f.home] || [], fresh.squads[f.away] || [], homeM.name, awayM.name,
           fresh.formations[f.home], fresh.formations[f.away]);
-        return { ...f, played: true, homeGoals: result.homeGoals, awayGoals: result.awayGoals, log: result.log };
+        return { ...f, played: true, homeGoals: result.homeGoals, awayGoals: result.awayGoals, log: result.log, scorers: result.scorers, liveStartedAt };
       });
       return { ...fresh, fixtures };
     });
@@ -1741,7 +1883,7 @@ function PremAuctionLeague() {
     return <AuctionScreen room={room} myId={myId} onBid={placeBid} onPass={passLot} onSkipPhase={skipPhase} onCloseRoom={closeRoom} now={now} />;
   }
   if (room.status === "league") {
-    return <LeagueScreen room={room} myId={myId} onSimulate={simulateOne} onSimulateAll={simulateAll} onPlayAgain={playAgain} onCloseRoom={closeRoom} />;
+    return <LeagueScreen room={room} myId={myId} onSimulate={simulateOne} onSimulateAll={simulateAll} onPlayAgain={playAgain} onCloseRoom={closeRoom} now={now} />;
   }
   return null;
 }
