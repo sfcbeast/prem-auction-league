@@ -303,15 +303,17 @@ function squadIsComplete(squad, counts) {
   return Object.keys(counts).every((pos) => c[pos] >= counts[pos]);
 }
 
-function bidIncrement(amount) {
-  if (amount < 10) return 0.5;
-  if (amount < 50) return 1;
-  if (amount < 100) return 2.5;
-  return 5;
+// Increment is 10% of THIS lot's base price, not the current bid — so a
+// £24M defender and a £91M Icon each escalate in steps sized to their own
+// value instead of both jumping by the same flat amount once they cross
+// the same absolute price line. Floored at £0.5M so a very cheap lot
+// still makes real forward progress each round.
+function bidIncrement(basePrice) {
+  return Math.max(0.5, Math.round(basePrice * 0.10 * 2) / 2);
 }
 function nextBidAmount(currentBid, basePrice) {
   if (currentBid == null) return basePrice;
-  return Math.round((currentBid + bidIncrement(currentBid)) * 2) / 2;
+  return Math.round((currentBid + bidIncrement(basePrice)) * 2) / 2;
 }
 function fmtM(n) {
   if (n == null) return "—";
