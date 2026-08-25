@@ -307,9 +307,11 @@ function squadIsComplete(squad, counts) {
 // £24M defender and a £91M Icon each escalate in steps sized to their own
 // value instead of both jumping by the same flat amount once they cross
 // the same absolute price line. Floored at £0.5M so a very cheap lot
-// still makes real forward progress each round.
+// still makes real forward progress each round (no getting stuck raising
+// by £1M forever), and capped at £10M so even the priciest Icon can't
+// somehow escalate by more than that in a single step.
 function bidIncrement(basePrice) {
-  return Math.max(0.5, Math.round(basePrice * 0.10 * 2) / 2);
+  return Math.min(10, Math.max(0.5, Math.round(basePrice * 0.10 * 2) / 2));
 }
 function nextBidAmount(currentBid, basePrice) {
   if (currentBid == null) return basePrice;
