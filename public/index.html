@@ -1372,6 +1372,30 @@ function PremAuctionLeague() {
     return () => clearInterval(t);
   }, [code, room && room.status]);
 
+  // Applies compute(fresh) -> updated against the room, retrying against a
+  // freshly re-read room on a 409 conflict rather than giving up silently.
+  // A silent failure used to leave the optimistic setRoom() from the first
+  // attempt on screen even though the server rejected it — invisible until
+  // the next poll quietly reverted it, which is what read as "lag" once
+  // the atomic CAS fix (necessarily) started rejecting losing writers
+  // instead of letting them silently corrupt the room. compute() returning
+  // a falsy value aborts (e.g. the fresh state made the action invalid).
+  const commitWithRetry = async (key, compute, maxAttempts = 6) => {
+    let fresh = roomRef.current;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (!fresh) return null;
+      const updated = compute(fresh);
+      if (!updated) return null;
+      const withRev = { ...updated, rev: fresh.rev + 1 };
+      setRoom(withRev);
+      const ok = await storageSet(key, withRev, true, fresh.rev);
+      if (ok) return withRev;
+      await new Promise((r) => setTimeout(r, 50 + Math.random() * 90));
+      fresh = await storageGet(key);
+    }
+    return null;
+  };
+
   const persistActiveRoom = (c) => {
     if (c) localStorage.setItem(ACTIVE_ROOM_KEY, c); else localStorage.removeItem(ACTIVE_ROOM_KEY);
   };
@@ -1429,99 +1453,99 @@ function PremAuctionLeague() {
   };
 
   const updateBudget = async (budget) => {
-    const fresh = roomRef.current; if (!fresh) return;
-    const remainingBudget = {};
-    fresh.players.forEach((p) => (remainingBudget[p.id] = budget));
-    const updated = { ...fresh, budget, remainingBudget, rev: fresh.rev + 1 };
-    setRoom(updated);
-    await commitIfRevMatches(roomKey(code), fresh, updated);
+    await commitWithRetry(roomKey(code), (fresh) => {
+      const remainingBudget = {};
+      fresh.players.forEach((p) => (remainingBudget[p.id] = budget));
+      return { ...fresh, budget, remainingBudget };
+    });
   };
 
   const setFormation = async (formationKey) => {
-    const fresh = roomRef.current; if (!fresh) return;
-    const updated = { ...fresh, formations: { ...fresh.formations, [myId]: formationKey }, rev: fresh.rev + 1 };
-    setRoom(updated);
-    await commitIfRevMatches(roomKey(code), fresh, updated);
+    await commitWithRetry(roomKey(code), (fresh) => ({ ...fresh, formations: { ...fresh.formations, [myId]: formationKey } }));
   };
 
   const startAuction = async () => {
-    const fresh = roomRef.current; if (!fresh) return;
-    let players = fresh.players;
-    let squads = { ...fresh.squads };
-    let remainingBudget = { ...fresh.remainingBudget };
-    let formations = { ...fresh.formations };
-    if (players.length < 2) {
-      const bot = { id: "AI_" + genId(), name: AI_NAMES[Math.floor(Math.random() * AI_NAMES.length)], isAI: true, colorIdx: players.length };
-      players = [...players, bot];
-      squads[bot.id] = [];
-      remainingBudget[bot.id] = fresh.budget;
-      formations[bot.id] = randomFormationKey();
-    }
-    const pool = buildAuctionPool();
-    const updated = {
-      ...fresh, players, squads, remainingBudget, formations, status: "auction",
-      pool, lotIndex: 0, currentLot: makeLot(pool[0], 1), soldLog: [], unsoldIds: [],
-    };
-    await commitIfRevMatches(roomKey(code), fresh, { ...updated, rev: fresh.rev + 1 });
+    await commitWithRetry(roomKey(code), (fresh) => {
+      let players = fresh.players;
+      let squads = { ...fresh.squads };
+      let remainingBudget = { ...fresh.remainingBudget };
+      let formations = { ...fresh.formations };
+      if (players.length < 2) {
+        const bot = { id: "AI_" + genId(), name: AI_NAMES[Math.floor(Math.random() * AI_NAMES.length)], isAI: true, colorIdx: players.length };
+        players = [...players, bot];
+        squads[bot.id] = [];
+        remainingBudget[bot.id] = fresh.budget;
+        formations[bot.id] = randomFormationKey();
+      }
+      const pool = buildAuctionPool();
+      return {
+        ...fresh, players, squads, remainingBudget, formations, status: "auction",
+        pool, lotIndex: 0, currentLot: makeLot(pool[0], 1), soldLog: [], unsoldIds: [],
+      };
+    });
   };
 
-  // Bid/pass update local state immediately (optimistic) so the click
-  // feels instant, then fire the network commit in the background — the
-  // next poll (or a failed rev match) reconciles with server truth, so a
-  // lost race just self-heals a moment later instead of blocking the UI.
+  // Retries against a fresh read on conflict — with several people
+  // bidding on the same lot in the same few hundred milliseconds, a
+  // rev conflict here is routine, not exceptional, so it has to recover
+  // by itself rather than leave a rejected optimistic bid on screen.
   const placeBid = async (amount) => {
-    const fresh = roomRef.current; if (!fresh || !fresh.currentLot) return;
-    const lot = fresh.currentLot;
-    const player = PLAYERS_BY_ID[lot.footballerId];
-    const squad = fresh.squads[myId] || [];
-    const budget = fresh.remainingBudget[myId] || 0;
-    if (!canBid(squad, budget, player, amount, countsFor(fresh, myId))) return;
-    const updated = { ...fresh, currentLot: { ...lot, currentBid: amount, currentBidderId: myId, deadlineTs: Date.now() + LOT_DURATION_MS, passed: lot.passed.filter((id) => id !== myId) }, rev: fresh.rev + 1 };
-    setRoom(updated);
-    await commitIfRevMatches(roomKey(code), fresh, updated);
+    await commitWithRetry(roomKey(code), (fresh) => {
+      if (!fresh.currentLot) return null;
+      const lot = fresh.currentLot;
+      const player = PLAYERS_BY_ID[lot.footballerId];
+      const squad = fresh.squads[myId] || [];
+      const budget = fresh.remainingBudget[myId] || 0;
+      // Re-validated against whatever's actually current on each retry —
+      // e.g. if the lot resolved/advanced between attempts, canBid runs
+      // against the NEW lot's player, not a stale one, and correctly
+      // aborts if that no longer makes sense (position filled elsewhere,
+      // budget moved, etc.) rather than blindly reapplying an old bid.
+      if (!canBid(squad, budget, player, amount, countsFor(fresh, myId))) return null;
+      return { ...fresh, currentLot: { ...lot, currentBid: amount, currentBidderId: myId, deadlineTs: Date.now() + LOT_DURATION_MS, passed: lot.passed.filter((id) => id !== myId) } };
+    });
   };
   const passLot = async () => {
-    const fresh = roomRef.current; if (!fresh || !fresh.currentLot) return;
-    const lot = fresh.currentLot;
-    if (lot.passed.includes(myId)) return;
-    const updated = { ...fresh, currentLot: { ...lot, passed: [...lot.passed, myId] }, rev: fresh.rev + 1 };
-    setRoom(updated);
-    await commitIfRevMatches(roomKey(code), fresh, updated);
+    await commitWithRetry(roomKey(code), (fresh) => {
+      if (!fresh.currentLot) return null;
+      const lot = fresh.currentLot;
+      if (lot.passed.includes(myId)) return null;
+      return { ...fresh, currentLot: { ...lot, passed: [...lot.passed, myId] } };
+    });
   };
 
   const simulateOne = async (fixtureId) => {
-    const fresh = roomRef.current; if (!fresh) return;
-    const fixture = fresh.fixtures.find((f) => f.id === fixtureId);
-    if (!fixture || fixture.played) return;
-    const homeM = fresh.players.find((m) => m.id === fixture.home);
-    const awayM = fresh.players.find((m) => m.id === fixture.away);
-    const result = simulateFixture(fresh.squads[fixture.home] || [], fresh.squads[fixture.away] || [], homeM.name, awayM.name,
-      fresh.formations[fixture.home], fresh.formations[fixture.away]);
-    const fixtures = fresh.fixtures.map((f) => f.id === fixtureId ? { ...f, played: true, homeGoals: result.homeGoals, awayGoals: result.awayGoals, log: result.log } : f);
-    const updated = { ...fresh, fixtures };
-    await commitIfRevMatches(roomKey(code), fresh, { ...updated, rev: fresh.rev + 1 });
+    await commitWithRetry(roomKey(code), (fresh) => {
+      const fixture = fresh.fixtures.find((f) => f.id === fixtureId);
+      if (!fixture || fixture.played) return null;
+      const homeM = fresh.players.find((m) => m.id === fixture.home);
+      const awayM = fresh.players.find((m) => m.id === fixture.away);
+      const result = simulateFixture(fresh.squads[fixture.home] || [], fresh.squads[fixture.away] || [], homeM.name, awayM.name,
+        fresh.formations[fixture.home], fresh.formations[fixture.away]);
+      const fixtures = fresh.fixtures.map((f) => f.id === fixtureId ? { ...f, played: true, homeGoals: result.homeGoals, awayGoals: result.awayGoals, log: result.log } : f);
+      return { ...fresh, fixtures };
+    });
   };
   const simulateAll = async () => {
-    let fresh = roomRef.current; if (!fresh) return;
-    let fixtures = [...fresh.fixtures];
-    fixtures = fixtures.map((f) => {
-      if (f.played) return f;
-      const homeM = fresh.players.find((m) => m.id === f.home);
-      const awayM = fresh.players.find((m) => m.id === f.away);
-      const result = simulateFixture(fresh.squads[f.home] || [], fresh.squads[f.away] || [], homeM.name, awayM.name,
-        fresh.formations[f.home], fresh.formations[f.away]);
-      return { ...f, played: true, homeGoals: result.homeGoals, awayGoals: result.awayGoals, log: result.log };
+    await commitWithRetry(roomKey(code), (fresh) => {
+      const fixtures = fresh.fixtures.map((f) => {
+        if (f.played) return f;
+        const homeM = fresh.players.find((m) => m.id === f.home);
+        const awayM = fresh.players.find((m) => m.id === f.away);
+        const result = simulateFixture(fresh.squads[f.home] || [], fresh.squads[f.away] || [], homeM.name, awayM.name,
+          fresh.formations[f.home], fresh.formations[f.away]);
+        return { ...f, played: true, homeGoals: result.homeGoals, awayGoals: result.awayGoals, log: result.log };
+      });
+      return { ...fresh, fixtures };
     });
-    const updated = { ...fresh, fixtures };
-    await commitIfRevMatches(roomKey(code), fresh, { ...updated, rev: fresh.rev + 1 });
   };
 
   const playAgain = async () => {
-    const fresh = roomRef.current; if (!fresh) return;
-    const squads = {}; const remainingBudget = {};
-    fresh.players.forEach((p) => { squads[p.id] = []; remainingBudget[p.id] = fresh.budget; });
-    const updated = { ...fresh, status: "lobby", squads, remainingBudget, pool: [], lotIndex: -1, currentLot: null, soldLog: [], unsoldIds: [], fixtures: [] };
-    await commitIfRevMatches(roomKey(code), fresh, { ...updated, rev: fresh.rev + 1 });
+    await commitWithRetry(roomKey(code), (fresh) => {
+      const squads = {}; const remainingBudget = {};
+      fresh.players.forEach((p) => { squads[p.id] = []; remainingBudget[p.id] = fresh.budget; });
+      return { ...fresh, status: "lobby", squads, remainingBudget, pool: [], lotIndex: -1, currentLot: null, soldLog: [], unsoldIds: [], fixtures: [] };
+    });
   };
 
   const leaveRoom = () => { persistActiveRoom(null); setCode(null); setRoom(null); };
