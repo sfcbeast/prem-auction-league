@@ -588,6 +588,25 @@ async function storageGet(key, shared = true) {
     return r && r.value !== undefined ? JSON.parse(r.value) : null;
   } catch { return null; }
 }
+// Distinguishes a genuine "this key was deleted" 404 from a transient
+// network hiccup (which also surfaces as no value from storageGet) — the
+// room-poll loop needs this distinction so a momentary fetch failure
+// never gets misread as "the host closed the room."
+async function fetchRoomStatus(key) {
+  try {
+    const res = await fetch(`/api/kv/${encodeURIComponent(key)}`);
+    if (res.status === 404) return { deleted: true, value: null };
+    if (!res.ok) return { deleted: false, value: null };
+    const r = await res.json();
+    return { deleted: false, value: r && r.value !== undefined ? JSON.parse(r.value) : null };
+  } catch { return { deleted: false, value: null }; }
+}
+async function storageDelete(key) {
+  try {
+    await fetch(`/api/kv/${encodeURIComponent(key)}`, { method: "DELETE" });
+    return true;
+  } catch (e) { console.error("storage delete failed", e); return false; }
+}
 async function storageSet(key, value, shared = true, expectedRev) {
   try {
     if (!shared) { localStorage.setItem(key, JSON.stringify(value)); return true; }
@@ -826,6 +845,32 @@ function ManagerAvatar({ manager, size }) {
     </div>
   );
 }
+// Host-only, everywhere in the game (lobby/auction/league) — ends the
+// room for every connected player, not just the host's own tab. Needs a
+// deliberate second click within a few seconds so it can't be fired by
+// accident; reverts to the plain state on its own if left alone.
+function CloseRoomButton({ onClose }) {
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    if (!confirming) return;
+    const t = setTimeout(() => setConfirming(false), 4000);
+    return () => clearTimeout(t);
+  }, [confirming]);
+  if (confirming) {
+    return (
+      <button onClick={onClose} style={{ background: "#D64545" }}
+        className="text-[10px] font-bold uppercase tracking-wide px-2.5 py-1 rounded-full text-white active:scale-95 transition">
+        Confirm — Close for Everyone?
+      </button>
+    );
+  }
+  return (
+    <button onClick={() => setConfirming(true)}
+      className="text-[10px] font-bold uppercase tracking-wide px-2.5 py-1 rounded-full border border-white/15 opacity-60 hover:opacity-100 hover:bg-white/5 transition">
+      Close Room
+    </button>
+  );
+}
 // Real photo when we have one (sourced from Wikipedia at build time),
 // with a couple of silent retries for a transiently-flaky CDN fetch
 // before falling back to the colored position badge — same resilience
@@ -885,7 +930,7 @@ function CountdownBar({ deadlineTs, now }) {
 /* =========================================================================
    HOME SCREEN
 ========================================================================= */
-function HomeScreen({ onCreate, onJoin }) {
+function HomeScreen({ onCreate, onJoin, closedMessage, onDismissClosedMessage }) {
   const [name, setName] = useState(localStorage.getItem(PERSONAL_NAME_KEY) || "");
   const [showJoin, setShowJoin] = useState(false);
   const [codeInput, setCodeInput] = useState("");
@@ -921,6 +966,12 @@ function HomeScreen({ onCreate, onJoin }) {
           <h1 className="font-display text-3xl md:text-4xl" style={{ color: "#E8B23D" }}>PREM AUCTION LEAGUE</h1>
           <p className="opacity-60 text-sm mt-2">Bid for real Premier League legends 1992-present, build your XI, battle it out home &amp; away.</p>
         </div>
+        {closedMessage && (
+          <div className="flex items-center justify-between gap-3 mb-4 px-4 py-3 rounded-xl text-sm" style={{ background: "#D6455E22", border: "1px solid #D6455E55" }}>
+            <span>{closedMessage}</span>
+            <button onClick={onDismissClosedMessage} className="opacity-60 hover:opacity-100 shrink-0">✕</button>
+          </div>
+        )}
         <div style={{ background: "#101A2E" }} className="rounded-2xl p-5 border border-white/5">
           <label className="text-xs uppercase tracking-wide opacity-60 font-bold">Manager name</label>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sir Alex"
@@ -975,7 +1026,7 @@ function FormationCard({ fKey, selected, onSelect }) {
     </button>
   );
 }
-function LobbyScreen({ room, myId, onUpdateBudget, onSetFormation, onStart, onLeave }) {
+function LobbyScreen({ room, myId, onUpdateBudget, onSetFormation, onStart, onLeave, onCloseRoom }) {
   const isHost = room.hostId === myId;
   const [budget, setBudget] = useState(room.budget);
   const myFormation = (room.formations && room.formations[myId]) || DEFAULT_FORMATION;
@@ -1028,7 +1079,10 @@ function LobbyScreen({ room, myId, onUpdateBudget, onSetFormation, onStart, onLe
         ) : (
           <div className="text-center text-sm opacity-60 py-3">Waiting for the host to start the auction…</div>
         )}
-        <button onClick={onLeave} className="w-full py-2 mt-2 text-xs opacity-40 hover:opacity-70">Leave room</button>
+        <div className="flex items-center justify-center gap-3 mt-2">
+          <button onClick={onLeave} className="py-2 text-xs opacity-40 hover:opacity-70">Leave room</button>
+          {isHost && <CloseRoomButton onClose={onCloseRoom} />}
+        </div>
       </div>
     </div>
   );
@@ -1108,7 +1162,7 @@ function StatBar({ label, value, highlight }) {
     </div>
   );
 }
-function AuctionScreen({ room, myId, onBid, onPass, onSkipPhase, now }) {
+function AuctionScreen({ room, myId, onBid, onPass, onSkipPhase, onCloseRoom, now }) {
   const [viewingId, setViewingId] = useState(null);
   const lot = room.currentLot;
   const player = lot ? PLAYERS_BY_ID[lot.footballerId] : null;
@@ -1148,7 +1202,10 @@ function AuctionScreen({ room, myId, onBid, onPass, onSkipPhase, now }) {
       <div className="flex items-center justify-between mb-3 text-xs opacity-60">
         <div>Lot #{lot.lotNumber} of {room.pool.length}</div>
         <div>Your formation: <span className="font-mono opacity-90">{FORMATIONS[(room.formations && room.formations[myId]) || DEFAULT_FORMATION].label}</span></div>
-        <div className="font-mono">Room {room.code}</div>
+        <div className="flex items-center gap-3">
+          <span className="font-mono">Room {room.code}</span>
+          {isHost && <CloseRoomButton onClose={onCloseRoom} />}
+        </div>
       </div>
       <div className="grid md:grid-cols-[1fr_300px] gap-4">
         <div style={{ background: "#101A2E" }} className="rounded-2xl p-5 border border-white/5">
@@ -1304,13 +1361,18 @@ function FixtureRow({ fixture, room, onSimulate }) {
     </div>
   );
 }
-function LeagueScreen({ room, myId, onSimulate, onSimulateAll, onPlayAgain }) {
+function LeagueScreen({ room, myId, onSimulate, onSimulateAll, onPlayAgain, onCloseRoom }) {
   const unplayed = room.fixtures.filter((f) => !f.played);
   const table = computeTable(room.players.map((p) => p.id), room.fixtures);
   const champion = unplayed.length === 0 ? table[0] : null;
   const mySquad = room.squads[myId] || [];
+  const isHost = room.hostId === myId;
   return (
     <div className="min-h-full p-3 md:p-5 max-w-5xl mx-auto">
+      <div className="flex items-center justify-between mb-3 text-xs opacity-60">
+        <span className="font-mono">Room {room.code}</span>
+        {isHost && <CloseRoomButton onClose={onCloseRoom} />}
+      </div>
       {champion && <ChampionBanner champion={room.players.find((m) => m.id === champion.id)} onPlayAgain={onPlayAgain} isHost={room.hostId === myId} />}
       <div className="grid md:grid-cols-[1fr_320px] gap-4">
         <div style={{ background: "#101A2E" }} className="rounded-2xl p-4 border border-white/5">
@@ -1374,6 +1436,7 @@ function PremAuctionLeague() {
   });
   const [code, setCode] = useState(() => localStorage.getItem(ACTIVE_ROOM_KEY) || null);
   const [room, setRoom] = useState(null);
+  const [closedMessage, setClosedMessage] = useState(null);
   const [now, setNow] = useState(Date.now());
   const roomRef = useRef(null);
   roomRef.current = room;
@@ -1384,17 +1447,38 @@ function PremAuctionLeague() {
     return () => clearInterval(t);
   }, []);
 
-  // Poll shared room state.
+  // Poll shared room state — also fires immediately the instant the tab
+  // regains visibility. Browsers throttle setInterval hard while a tab is
+  // backgrounded (phone locked, tab switched, laptop asleep — Chrome can
+  // drop to roughly once a minute after a few minutes hidden), so without
+  // this, state can sit stale until the interval happens to catch up. If
+  // every connected player's tab is backgrounded at once, nothing in the
+  // game advances at all until someone looks back — this is what "the
+  // server gets stuck" actually was, since all game logic runs
+  // client-side on these timers, not on the server.
   useEffect(() => {
     if (!code) return;
     let alive = true;
     const tick = async () => {
-      const data = await storageGet(roomKey(code));
-      if (alive && data) setRoom(data);
+      const { deleted, value } = await fetchRoomStatus(roomKey(code));
+      if (!alive) return;
+      if (deleted) {
+        // Confirmed gone (not just a network blip) — the host closed it.
+        // Bounce everyone else back to the home screen with an explanation
+        // instead of leaving their UI frozen on stale state forever.
+        setClosedMessage("This room was closed by the host.");
+        localStorage.removeItem(ACTIVE_ROOM_KEY);
+        setCode(null);
+        setRoom(null);
+        return;
+      }
+      if (value) setRoom(value);
     };
     tick();
     const t = setInterval(tick, 800);
-    return () => { alive = false; clearInterval(t); };
+    const onVisible = () => { if (document.visibilityState === "visible") tick(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { alive = false; clearInterval(t); document.removeEventListener("visibilitychange", onVisible); };
   }, [code]);
 
   // Auto-resolve auction lots (timer/pass-out) and drive AI bidding — any
@@ -1438,7 +1522,9 @@ function PremAuctionLeague() {
       }
     };
     const t = setInterval(run, 700);
-    return () => clearInterval(t);
+    const onVisible = () => { if (document.visibilityState === "visible") run(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVisible); };
   }, [code, room && room.status]);
 
   // Applies compute(fresh) -> updated against the room, retrying against a
@@ -1629,18 +1715,28 @@ function PremAuctionLeague() {
   };
 
   const leaveRoom = () => { persistActiveRoom(null); setCode(null); setRoom(null); };
+  // Host-only: ends the room for everyone, not just this tab. Every other
+  // connected client's poll picks up the deletion within one tick (or
+  // instantly on visibility regain) and gets bounced to the home screen
+  // with an explanation, rather than being left staring at a dead room.
+  const closeRoom = async () => {
+    const fresh = roomRef.current;
+    if (!fresh || fresh.hostId !== myId) return;
+    await storageDelete(roomKey(code));
+    persistActiveRoom(null); setCode(null); setRoom(null);
+  };
 
   if (!code || !room) {
-    return <HomeScreen onCreate={createRoom} onJoin={joinRoom} />;
+    return <HomeScreen onCreate={createRoom} onJoin={joinRoom} closedMessage={closedMessage} onDismissClosedMessage={() => setClosedMessage(null)} />;
   }
   if (room.status === "lobby") {
-    return <LobbyScreen room={room} myId={myId} onUpdateBudget={updateBudget} onSetFormation={setFormation} onStart={startAuction} onLeave={leaveRoom} />;
+    return <LobbyScreen room={room} myId={myId} onUpdateBudget={updateBudget} onSetFormation={setFormation} onStart={startAuction} onLeave={leaveRoom} onCloseRoom={closeRoom} />;
   }
   if (room.status === "auction") {
-    return <AuctionScreen room={room} myId={myId} onBid={placeBid} onPass={passLot} onSkipPhase={skipPhase} now={now} />;
+    return <AuctionScreen room={room} myId={myId} onBid={placeBid} onPass={passLot} onSkipPhase={skipPhase} onCloseRoom={closeRoom} now={now} />;
   }
   if (room.status === "league") {
-    return <LeagueScreen room={room} myId={myId} onSimulate={simulateOne} onSimulateAll={simulateAll} onPlayAgain={playAgain} />;
+    return <LeagueScreen room={room} myId={myId} onSimulate={simulateOne} onSimulateAll={simulateAll} onPlayAgain={playAgain} onCloseRoom={closeRoom} />;
   }
   return null;
 }
