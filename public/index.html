@@ -7,9 +7,9 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%E2%9A%BD</text></svg>" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Oswald:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
 <style>
-  html, body, #root { height: 100%; margin: 0; color: #EDEBE3; font-family: 'Inter', sans-serif; }
+  html, body, #root { height: 100%; margin: 0; color: #EDEBE3; font-family: 'Manrope', sans-serif; }
   /* Stadium-floodlight backdrop — a wash of Premier League purple glowing
      down from the top over near-black, instead of a flat dark panel. This
      is the single biggest driver of "broadcast" vs "generic dashboard". */
@@ -21,7 +21,14 @@
       #070912;
     background-attachment: fixed;
   }
-  .font-display { font-family: 'Anton', sans-serif; letter-spacing: 0.02em; }
+  /* Oswald (condensed, athletic — genuine sports-broadcast typography)
+     is the everyday display face: player names, headers, badges. It
+     stays legible at small sizes, unlike Anton, which is now reserved
+     for .font-hero — the one or two biggest moments per screen (the
+     home title, "X WINS THE LEAGUE") where its extra weight earns its
+     keep instead of just being loud everywhere. */
+  .font-display { font-family: 'Oswald', sans-serif; letter-spacing: 0.01em; font-weight: 600; }
+  .font-hero { font-family: 'Anton', sans-serif; letter-spacing: 0.02em; }
   .font-mono { font-family: 'JetBrains Mono', monospace; }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: #263148; border-radius: 8px; }
@@ -1221,7 +1228,7 @@ function HomeScreen({ onCreate, onJoin, closedMessage, onDismissClosedMessage })
           <div className="absolute left-1/2 top-1/2" style={{ transform: "translate(-50%,-50%)", width: 280, height: 280, background: "radial-gradient(circle, rgba(150,60,255,0.28), transparent 70%)", pointerEvents: "none" }} />
           <div className="relative text-5xl mb-2">⚽</div>
           <div className="relative inline-block px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] mb-2" style={{ background: "#3D195B", color: "#EDEBE3" }}>Premier League Auction</div>
-          <h1 className="relative font-display text-3xl md:text-4xl" style={{ color: "#E8B23D" }}>PREM AUCTION LEAGUE</h1>
+          <h1 className="relative font-hero text-3xl md:text-4xl" style={{ color: "#E8B23D" }}>PREM AUCTION LEAGUE</h1>
           <p className="relative opacity-60 text-sm mt-2">Bid for real Premier League legends 1992-present, build your XI, battle it out home &amp; away.</p>
         </div>
         {closedMessage && (
@@ -1247,7 +1254,7 @@ function HomeScreen({ onCreate, onJoin, closedMessage, onDismissClosedMessage })
           </div>
 
           {!showJoin ? (
-            <button onClick={() => setShowJoin(true)} className="w-full py-2.5 rounded-lg font-bold text-sm border border-white/15 hover:bg-white/5 transition">
+            <button onClick={() => setShowJoin(true)} className="w-full py-2.5 rounded-lg font-bold text-sm border hover:bg-white/5 transition" style={{ borderColor: "rgba(150,60,255,0.4)" }}>
               Join a Friend's Room
             </button>
           ) : (
@@ -1452,7 +1459,8 @@ function AuctionScreen({ room, myId, onBid, onPass, onSkipPhase, onCloseRoom, no
         </span>
         {isHost && (
           <button onClick={onSkipPhase} title="Resolves this lot normally, then jumps straight past the rest of this position category"
-            className="text-[10px] font-bold uppercase tracking-wide px-2.5 py-1 rounded-full border border-white/15 opacity-70 hover:opacity-100 hover:bg-white/5 transition">
+            className="text-[10px] font-bold uppercase tracking-wide px-2.5 py-1 rounded-full border transition"
+            style={{ borderColor: "rgba(150,60,255,0.4)", color: "#C48CFF" }}>
             Skip to {nextPos ? POS_LABEL[nextPos] + "s" : "League"} →
           </button>
         )}
@@ -1499,7 +1507,8 @@ function AuctionScreen({ room, myId, onBid, onPass, onSkipPhase, onCloseRoom, no
               Bid {fmtM(askAmount)}
             </button>
             <button onClick={onPass} disabled={iPassed || iAmLeading}
-              className={`px-6 py-3 rounded-xl font-bold border ${iPassed || iAmLeading ? "opacity-30 cursor-not-allowed border-white/10" : "border-white/20 hover:bg-white/5"}`}>
+              className={`px-6 py-3 rounded-xl font-bold border transition ${iPassed || iAmLeading ? "opacity-30 cursor-not-allowed border-white/10" : "hover:bg-white/5"}`}
+              style={iPassed || iAmLeading ? undefined : { borderColor: "rgba(150,60,255,0.45)" }}>
               Pass
             </button>
           </div>
@@ -1739,7 +1748,7 @@ function ChampionBanner({ champion, onPlayAgain, isHost }) {
         <div style={{ position: "absolute", top: "50%", left: "50%", width: 180, height: 180, transform: "translate(-50%,-50%)", background: "radial-gradient(circle, rgba(232,178,61,0.35), transparent 70%)" }} className="pal-card-glow" />
         <div className="relative text-7xl py-2" style={{ filter: "drop-shadow(0 6px 14px rgba(232,178,61,0.5))" }}>🏆</div>
       </div>
-      <div className="font-display text-2xl md:text-3xl relative" style={{ color: "#E8B23D" }}>{champion?.name} WINS THE LEAGUE!</div>
+      <div className="font-hero text-2xl md:text-3xl relative" style={{ color: "#E8B23D" }}>{champion?.name} WINS THE LEAGUE!</div>
       <div className="opacity-60 text-sm mt-1 relative">Top of the table after every fixture played.</div>
       {isHost && (
         <button onClick={onPlayAgain} style={{ background: "#3FA796" }} className="mt-4 px-5 py-2 rounded-lg font-bold text-[#0A0F1A] active:scale-95">
