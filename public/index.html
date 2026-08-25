@@ -1,0 +1,1461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Prem Auction League — Online Multiplayer</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%E2%9A%BD</text></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+<style>
+  html, body, #root { height: 100%; margin: 0; background: #070C16; color: #EDEBE3; font-family: 'Inter', sans-serif; }
+  .font-display { font-family: 'Anton', sans-serif; letter-spacing: 0.02em; }
+  .font-mono { font-family: 'JetBrains Mono', monospace; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #263148; border-radius: 8px; }
+  @keyframes pal-pop { 0% { transform: scale(0.4); opacity: 0; } 60% { transform: scale(1.12); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+  .pal-pop { animation: pal-pop 0.35s ease; }
+  @keyframes pal-stamp { 0% { transform: scale(2.2) rotate(-12deg); opacity: 0; } 60% { transform: scale(0.92) rotate(-12deg); opacity: 1; } 100% { transform: scale(1) rotate(-12deg); opacity: 1; } }
+  .pal-stamp { animation: pal-stamp 0.4s cubic-bezier(.2,1.4,.4,1); }
+  @keyframes pal-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(232,178,61,0.55); } 50% { box-shadow: 0 0 0 8px rgba(232,178,61,0); } }
+  .pal-pulse { animation: pal-pulse 1.1s ease infinite; }
+  @keyframes pal-confetti { 0% { transform: translateY(-10vh) rotate(0deg); opacity: 1; } 100% { transform: translateY(112vh) rotate(360deg); opacity: 0.9; } }
+  .pal-confetti { animation: pal-confetti linear forwards; }
+  @keyframes pal-shimmer { 0% { background-position: -200px 0; } 100% { background-position: 200px 0; } }
+</style>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/plain" id="app-source">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+/* =========================================================================
+   PLAYER DATABASE
+   ~160 real Premier League players spanning 1992 (PL founding) to today,
+   mixing all-time legends with the current core. Rating is a 60-99 scale
+   reflecting real-world peak ability/impact; tier & auction base price are
+   both derived from rating (see tierForRating / basePriceForRating) rather
+   than hand-set, so the price curve stays internally consistent.
+   Tuple shape: [name, position, club, era, rating]
+========================================================================= */
+const RAW_PLAYERS = [
+  // ---- Goalkeepers ----
+  ["Peter Schmeichel","GK","Manchester United","1992-1999",93,"https://upload.wikimedia.org/wikipedia/commons/thumb/2/24/Peter_Schmeichel_2012-01-25_001.jpg/330px-Peter_Schmeichel_2012-01-25_001.jpg"],
+  ["David Seaman","GK","Arsenal","1992-2003",87,"https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/David_Seaman.jpg/330px-David_Seaman.jpg"],
+  ["Petr Čech","GK","Chelsea","2004-2015",91,"https://upload.wikimedia.org/wikipedia/commons/7/75/Arsenal_players_training_before_2019_UEFA_Europa_League_final_07_%28cropped%29.jpg"],
+  ["Edwin van der Sar","GK","Manchester United","2005-2011",89,"https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/Edwin_van_der_Sar_2015.jpg/330px-Edwin_van_der_Sar_2015.jpg"],
+  ["Pepe Reina","GK","Liverpool","2005-2013",85,"https://upload.wikimedia.org/wikipedia/commons/thumb/5/52/Pepe_Reina_2017.jpg/330px-Pepe_Reina_2017.jpg"],
+  ["Joe Hart","GK","Manchester City","2008-2016",84,"https://upload.wikimedia.org/wikipedia/commons/thumb/4/41/Joe_Hart_69775.jpg/330px-Joe_Hart_69775.jpg"],
+  ["Thibaut Courtois","GK","Chelsea","2012-2018",89,"https://upload.wikimedia.org/wikipedia/commons/thumb/f/f7/Thibaut_Courtois_at_the_2018_World_Cup_%28cropped%29.jpg/330px-Thibaut_Courtois_at_the_2018_World_Cup_%28cropped%29.jpg"],
+  ["David de Gea","GK","Manchester United","2011-2023",88,"https://upload.wikimedia.org/wikipedia/commons/thumb/6/68/David_de_Gea_2017.jpg/330px-David_de_Gea_2017.jpg"],
+  ["Alisson Becker","GK","Liverpool","2018-2026",91,"https://upload.wikimedia.org/wikipedia/commons/thumb/4/4f/Alisson_Becker_Brazil_V_Morocco_13_June_2026-117_%28cropped%29.jpg/330px-Alisson_Becker_Brazil_V_Morocco_13_June_2026-117_%28cropped%29.jpg"],
+  ["Ederson","GK","Manchester City","2017-2026",90,"https://upload.wikimedia.org/wikipedia/commons/thumb/0/02/Ederson_Brazil_V_Morocco_13_June_2026-14_%28cropped%29.jpg/330px-Ederson_Brazil_V_Morocco_13_June_2026-14_%28cropped%29.jpg"],
+  ["Nick Pope","GK","Newcastle United","2017-2026",82,"https://upload.wikimedia.org/wikipedia/commons/thumb/7/78/Nick_Pope_23-04-2016_1.jpg/330px-Nick_Pope_23-04-2016_1.jpg"],
+  ["Jordan Pickford","GK","Everton","2017-2026",83,"https://upload.wikimedia.org/wikipedia/commons/thumb/4/4f/Jordan_Pickford_England_v_Ghana_23_June_2026-316_%28cropped%29.jpg/330px-Jordan_Pickford_England_v_Ghana_23_June_2026-316_%28cropped%29.jpg"],
+  ["Aaron Ramsdale","GK","Arsenal","2021-2023",81,"https://upload.wikimedia.org/wikipedia/commons/7/74/Aaron_Ramsdale_2026.png"],
+  ["Emiliano Martínez","GK","Aston Villa","2020-2026",85,"https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Emiliano_Martinez_Argentina_v_Egypt_7_July_2026-093_%28cropped%29.jpg/330px-Emiliano_Martinez_Argentina_v_Egypt_7_July_2026-093_%28cropped%29.jpg"],
+  ["Kasper Schmeichel","GK","Leicester City","2011-2022",83,"https://upload.wikimedia.org/wikipedia/commons/thumb/9/95/Kasper_Schmeichel_Celtic-20240722_%28cropped%29.jpg/330px-Kasper_Schmeichel_Celtic-20240722_%28cropped%29.jpg"],
+  ["Tim Howard","GK","Everton","2006-2016",82,"https://upload.wikimedia.org/wikipedia/commons/thumb/2/26/Tim_Howard_2023.jpg/330px-Tim_Howard_2023.jpg"],
+  ["Mark Schwarzer","GK","Middlesbrough","1997-2013",80,"https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/Mark_Schwarzer.jpg/330px-Mark_Schwarzer.jpg"],
+  ["David James","GK","Liverpool","1992-2010",81,"https://upload.wikimedia.org/wikipedia/commons/thumb/d/dc/DaJa.JPG/330px-DaJa.JPG"],
+  ["Robert Green","GK","West Ham United","2004-2012",76,"https://upload.wikimedia.org/wikipedia/commons/thumb/a/a3/Robert-Greenpp.jpg/330px-Robert-Greenpp.jpg"],
+  ["Fraser Forster","GK","Southampton","2014-2018",76,"https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Fraser_Forster_09052026_%281%29.jpg/330px-Fraser_Forster_09052026_%281%29.jpg"],
+  // ---- Defenders ----
+  ["Tony Adams","DEF","Arsenal","1992-2002",89,"https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Tony_Adams_2017_portrait_%28cropped%29.jpg/330px-Tony_Adams_2017_portrait_%28cropped%29.jpg"],
+  ["Steve Bruce","DEF","Manchester United","1992-1996",82,"https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/Steve_Bruce.jpg/330px-Steve_Bruce.jpg"],
+  ["Nemanja Vidić","DEF","Manchester United","2006-2014",91,"https://upload.wikimedia.org/wikipedia/commons/thumb/6/63/Vidi%C4%87_%28cropped%29.jpg/330px-Vidi%C4%87_%28cropped%29.jpg"],
+  ["Rio Ferdinand","DEF","Manchester United","2002-2014",92,"https://upload.wikimedia.org/wikipedia/commons/thumb/4/4c/Web_Summit_2015_-_Dublin%2C_Ireland_-_22183056474_%28cropped%29.jpg/330px-Web_Summit_2015_-_Dublin%2C_Ireland_-_22183056474_%28cropped%29.jpg"],
+  ["John Terry","DEF","Chelsea","1998-2017",92,"https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/John_Terry_at_pro-am_Wentworth_golf_course_September_2023_%28cropped%29.jpg/330px-John_Terry_at_pro-am_Wentworth_golf_course_September_2023_%28cropped%29.jpg"],
+  ["Ashley Cole","DEF","Chelsea","2000-2014",91,"https://upload.wikimedia.org/wikipedia/commons/d/d5/ACole.JPG"],
+  ["Sol Campbell","DEF","Arsenal","1992-2010",87,"https://upload.wikimedia.org/wikipedia/commons/thumb/1/1f/Sol_Campbell_%2854921202604%29_%28cropped%29.jpg/330px-Sol_Campbell_%2854921202604%29_%28cropped%29.jpg"],
+  ["Jaap Stam","DEF","Manchester United","1998-2001",89,"https://upload.wikimedia.org/wikipedia/commons/thumb/1/18/Jaap_Stam_-_1.jpg/330px-Jaap_Stam_-_1.jpg"],
+  ["Gary Neville","DEF","Manchester United","1994-2011",86,"https://upload.wikimedia.org/wikipedia/commons/thumb/c/c9/Gary_Neville_2014_%28cropped%29.jpg/330px-Gary_Neville_2014_%28cropped%29.jpg"],
+  ["William Gallas","DEF","Chelsea","2001-2010",85,"https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/William_Gallas_2018_%282%29.jpg/330px-William_Gallas_2018_%282%29.jpg"],
+  ["Ricardo Carvalho","DEF","Chelsea","2004-2010",86,"https://upload.wikimedia.org/wikipedia/commons/7/74/Ricardo_Carvalho.jpg"],
+  ["Branislav Ivanović","DEF","Chelsea","2008-2017",84,"https://upload.wikimedia.org/wikipedia/commons/thumb/b/b7/Branislav_Ivanovi%C4%87_2020.jpg/330px-Branislav_Ivanovi%C4%87_2020.jpg"],
+  ["Vincent Kompany","DEF","Manchester City","2008-2019",89,"https://upload.wikimedia.org/wikipedia/commons/thumb/4/46/Vincent_Kompany_Bayern_Munich_%28cropped%29.jpg/330px-Vincent_Kompany_Bayern_Munich_%28cropped%29.jpg"],
+  ["Kolo Touré","DEF","Arsenal","2002-2009",84,"https://upload.wikimedia.org/wikipedia/commons/thumb/b/b6/Kolo_Toure_8932.JPG/330px-Kolo_Toure_8932.JPG"],
+  ["Virgil van Dijk","DEF","Liverpool","2018-2026",94,"https://upload.wikimedia.org/wikipedia/commons/thumb/5/5d/20160604_AUT_NED_8876_%28cropped%29.jpg/330px-20160604_AUT_NED_8876_%28cropped%29.jpg"],
+  ["Trent Alexander-Arnold","DEF","Liverpool","2016-2026",89,"https://upload.wikimedia.org/wikipedia/commons/5/5d/Trent_Alexander-Arnold_2018_%28cropped%29.jpg"],
+  ["Andrew Robertson","DEF","Liverpool","2017-2026",88,"https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/Andy_Robertson_Scotland_v_Bolivia_6_June_2026-43.jpg/330px-Andy_Robertson_Scotland_v_Bolivia_6_June_2026-43.jpg"],
+  ["Kyle Walker","DEF","Manchester City","2011-2026",86,"https://upload.wikimedia.org/wikipedia/commons/thumb/0/01/Kyle_Walker.jpg/330px-Kyle_Walker.jpg"],
+  ["João Cancelo","DEF","Manchester City","2019-2023",85,"https://upload.wikimedia.org/wikipedia/commons/thumb/e/ef/Joao_Cancelo_Croatia_v_Portugal_2_July_2026-002.jpg/330px-Joao_Cancelo_Croatia_v_Portugal_2_July_2026-002.jpg"],
+  ["Rúben Dias","DEF","Manchester City","2020-2026",89,"https://upload.wikimedia.org/wikipedia/commons/thumb/6/6a/Diogo_Costa_Ruben_Dias_Croatia_v_Portugal_2_July_2026-181_%28cropped%29.jpg/330px-Diogo_Costa_Ruben_Dias_Croatia_v_Portugal_2_July_2026-181_%28cropped%29.jpg"],
+  ["Thiago Silva","DEF","Chelsea","2020-2024",87,"https://upload.wikimedia.org/wikipedia/commons/thumb/c/c8/20180610_FIFA_Friendly_Match_Austria_vs._Brazil_Thiago_Silva_850_1582.jpg/330px-20180610_FIFA_Friendly_Match_Austria_vs._Brazil_Thiago_Silva_850_1582.jpg"],
+  ["César Azpilicueta","DEF","Chelsea","2012-2023",84,"https://upload.wikimedia.org/wikipedia/commons/thumb/7/7f/C%C3%A9sar_Azpilicueta%2C_Al_Hilal_SFC_vs_Chelsea_F.C.%2C_9_February_2022.jpg/330px-C%C3%A9sar_Azpilicueta%2C_Al_Hilal_SFC_vs_Chelsea_F.C.%2C_9_February_2022.jpg"],
+  ["Marcos Alonso","DEF","Chelsea","2016-2023",80,"https://upload.wikimedia.org/wikipedia/commons/7/76/Marcos_Alonso_Mendoza.jpg"],
+  ["Aymeric Laporte","DEF","Manchester City","2018-2023",85,"https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/Aymeric_Laporte_Argentina_v_Spain_19_July_2026-067_%28cropped%29.jpg/330px-Aymeric_Laporte_Argentina_v_Spain_19_July_2026-067_%28cropped%29.jpg"],
+  ["William Saliba","DEF","Arsenal","2022-2026",85,"https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/William_Saliba_France_v_Senegal_16_June_2026-336_%28cropped%29.jpg/330px-William_Saliba_France_v_Senegal_16_June_2026-336_%28cropped%29.jpg"],
+  ["Gabriel Magalhães","DEF","Arsenal","2020-2026",84,"https://upload.wikimedia.org/wikipedia/commons/thumb/8/8e/Gabriel_Magalhaes_Brazil_V_Morocco_13_June_2026-132_%28cropped%29.jpg/330px-Gabriel_Magalhaes_Brazil_V_Morocco_13_June_2026-132_%28cropped%29.jpg"],
+  ["Ben White","DEF","Arsenal","2021-2026",80,"https://upload.wikimedia.org/wikipedia/commons/thumb/a/a0/Ben_White_2018.jpg/330px-Ben_White_2018.jpg"],
+  ["Reece James","DEF","Chelsea","2019-2026",83,"https://upload.wikimedia.org/wikipedia/commons/thumb/3/3e/Reece_James_England_v_Ghana_23_June_2026-248_%28cropped%29.jpg/330px-Reece_James_England_v_Ghana_23_June_2026-248_%28cropped%29.jpg"],
+  ["Levi Colwill","DEF","Chelsea","2023-2026",78,"https://upload.wikimedia.org/wikipedia/commons/d/d1/Levi_Colwill_FIFA_Club_World_Cup_final_extraction.jpg"],
+  ["Aaron Wan-Bissaka","DEF","Manchester United","2019-2026",76,"https://upload.wikimedia.org/wikipedia/commons/thumb/5/55/Aaron_Wan-Bissaka_of_West_Ham_United.jpeg/330px-Aaron_Wan-Bissaka_of_West_Ham_United.jpeg"],
+  ["Luke Shaw","DEF","Manchester United","2014-2026",82,"https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/Luke_Shaw%2C_Manchester_United_v_Newcastle_United%2C_11_September_2021_%2844%29_%28cropped%29.jpg/330px-Luke_Shaw%2C_Manchester_United_v_Newcastle_United%2C_11_September_2021_%2844%29_%28cropped%29.jpg"],
+  ["Harry Maguire","DEF","Manchester United","2019-2026",78,"https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Harry_Maguire_2023_%28cropped%29.jpg/330px-Harry_Maguire_2023_%28cropped%29.jpg"],
+  ["Raphaël Varane","DEF","Manchester United","2021-2024",85,"https://upload.wikimedia.org/wikipedia/commons/thumb/0/0a/Liver-RM_%288%29_%28Varane%29.jpg/330px-Liver-RM_%288%29_%28Varane%29.jpg"],
+  ["Fabian Schär","DEF","Newcastle United","2020-2026",80,"https://upload.wikimedia.org/wikipedia/commons/thumb/6/6d/Fabian_Sch%C3%A4r.jpg/330px-Fabian_Sch%C3%A4r.jpg"],
+  ["Sven Botman","DEF","Newcastle United","2022-2026",80,"https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/Sven_Botman_24052026_%286%29_%28cropped%29.jpg/330px-Sven_Botman_24052026_%286%29_%28cropped%29.jpg"],
+  ["Kieran Trippier","DEF","Newcastle United","2022-2026",82,"https://upload.wikimedia.org/wikipedia/commons/thumb/d/d8/Kieran_Trippier_2018-07-14_1.jpg/330px-Kieran_Trippier_2018-07-14_1.jpg"],
+  ["Micky van de Ven","DEF","Tottenham Hotspur","2023-2026",81,"https://upload.wikimedia.org/wikipedia/commons/thumb/3/3f/Micky_Van_De_Ven_pre-match_training_%28cropped%29.jpg/330px-Micky_Van_De_Ven_pre-match_training_%28cropped%29.jpg"],
+  ["Cristian Romero","DEF","Tottenham Hotspur","2021-2026",83,"https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/Cristian_Romero_Argentina_v_Egypt_7_July_2026-108.jpg/330px-Cristian_Romero_Argentina_v_Egypt_7_July_2026-108.jpg"],
+  ["Marc Guéhi","DEF","Crystal Palace","2021-2026",79,"https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Marc_Guehi_England_v_Panama_27_June_26-182.jpg/330px-Marc_Guehi_England_v_Panama_27_June_26-182.jpg"],
+  ["Gary Cahill","DEF","Chelsea","2012-2019",82,"https://upload.wikimedia.org/wikipedia/commons/thumb/1/11/Gary_Cahill_2018_2_%28cropped%29_%28cropped%29.jpg/330px-Gary_Cahill_2018_2_%28cropped%29_%28cropped%29.jpg"],
+  ["Jamie Carragher","DEF","Liverpool","1996-2013",88,"https://upload.wikimedia.org/wikipedia/commons/thumb/c/c8/Football_against_poverty_2014_-_Jamie_Carragher_%28cropped%29.jpg/330px-Football_against_poverty_2014_-_Jamie_Carragher_%28cropped%29.jpg"],
+  ["Sami Hyypiä","DEF","Liverpool","1999-2009",84,"https://upload.wikimedia.org/wikipedia/commons/2/21/Sami_Hyypia_2012_%28cropped%29.jpg"],
+  ["Wes Brown","DEF","Manchester United","1998-2011",80,"https://upload.wikimedia.org/wikipedia/commons/thumb/9/95/Wes_Brown_-_53689574832.jpg/330px-Wes_Brown_-_53689574832.jpg"],
+  ["Micah Richards","DEF","Manchester City","2005-2015",79,"https://upload.wikimedia.org/wikipedia/commons/thumb/d/d8/Richards_crop.JPG/330px-Richards_crop.JPG"],
+  ["Gaël Clichy","DEF","Arsenal","2003-2018",81,"https://upload.wikimedia.org/wikipedia/commons/thumb/4/4c/Gael_Clichy%2C_Premier_League_parade_11-12_%28cropped%29.jpg/330px-Gael_Clichy%2C_Premier_League_parade_11-12_%28cropped%29.jpg"],
+  ["Bacary Sagna","DEF","Arsenal","2007-2014",82,"https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Bacary_Sagna_2012.jpg/330px-Bacary_Sagna_2012.jpg"],
+  ["Patrice Evra","DEF","Manchester United","2006-2014",87,"https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Patrice_Evra_%2852472689279%29_%28cropped%29.jpg/330px-Patrice_Evra_%2852472689279%29_%28cropped%29.jpg"],
+  ["Leighton Baines","DEF","Everton","2007-2016",83,"https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/Baines_Leighton_126176_%28cropped%29.jpg/330px-Baines_Leighton_126176_%28cropped%29.jpg"],
+  ["Christian Fuchs","DEF","Leicester City","2015-2019",76,"https://upload.wikimedia.org/wikipedia/commons/thumb/2/2d/AUT_vs._TUR_2016-03-29_%28030%29.jpg/330px-AUT_vs._TUR_2016-03-29_%28030%29.jpg"],
+  ["Wes Morgan","DEF","Leicester City","2012-2020",78,"https://upload.wikimedia.org/wikipedia/commons/thumb/8/85/Wes_Morgan_Warming_up_vs_Leamington_Spa.jpg/330px-Wes_Morgan_Warming_up_vs_Leamington_Spa.jpg"],
+  ["Ezri Konsa","DEF","Aston Villa","2019-2026",78,"https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/Ezri_Konsa_England_v_Panama_27_June_26-259_%28cropped%29.jpg/330px-Ezri_Konsa_England_v_Panama_27_June_26-259_%28cropped%29.jpg"],
+  ["Pau Torres","DEF","Aston Villa","2023-2026",80,"https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/Pau_Torres_April_2026_%28cropped%29.jpg/330px-Pau_Torres_April_2026_%28cropped%29.jpg"],
+  ["Antonee Robinson","DEF","Fulham","2020-2026",77,"https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Antonee_Robinson_Australia_v_USA_19_June_2026-24_%28cropped%29.jpg/330px-Antonee_Robinson_Australia_v_USA_19_June_2026-24_%28cropped%29.jpg"],
+  // ---- Midfielders ----
+  ["Ryan Giggs","MID","Manchester United","1992-2014",93,"https://upload.wikimedia.org/wikipedia/commons/1/13/Ryan_Giggs_2015_%28cropped%29.jpg"],
+  ["Paul Scholes","MID","Manchester United","1994-2013",92,"https://upload.wikimedia.org/wikipedia/commons/thumb/d/dc/P_Scholes.jpg/330px-P_Scholes.jpg"],
+  ["Roy Keane","MID","Manchester United","1993-2005",92,"https://upload.wikimedia.org/wikipedia/commons/thumb/0/0a/Roy_keane_2014.jpg/330px-Roy_keane_2014.jpg"],
+  ["David Beckham","MID","Manchester United","1992-2003",90,"https://upload.wikimedia.org/wikipedia/commons/thumb/7/73/David_Beckham_UNICEF_%28cropped2%29.jpg/330px-David_Beckham_UNICEF_%28cropped2%29.jpg"],
+  ["Patrick Vieira","MID","Arsenal","1996-2005",92,"https://upload.wikimedia.org/wikipedia/commons/thumb/6/6c/Patrick_Vieira_NYCFC_%28cropped%29.JPG/330px-Patrick_Vieira_NYCFC_%28cropped%29.JPG"],
+  ["Steven Gerrard","MID","Liverpool","1998-2015",95,"https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/Steven_Gerrard_2018.jpg/330px-Steven_Gerrard_2018.jpg"],
+  ["Frank Lampard","MID","Chelsea","2001-2014",93,"https://upload.wikimedia.org/wikipedia/commons/thumb/8/8c/Frank_Lampard_2019.jpg/330px-Frank_Lampard_2019.jpg"],
+  ["Cesc Fàbregas","MID","Arsenal","2003-2014",88,"https://upload.wikimedia.org/wikipedia/commons/thumb/5/5b/2023_-_Cesc_Fabregas_%28cropped%29.jpg/330px-2023_-_Cesc_Fabregas_%28cropped%29.jpg"],
+  ["David Silva","MID","Manchester City","2010-2020",91,"https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/David_Silva_2017.jpg/330px-David_Silva_2017.jpg"],
+  ["Kevin De Bruyne","MID","Manchester City","2015-2026",96,"https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/Kevin_De_Bruyne_USMNT_v_Belgium_Mar_28_2026-64_%28cropped%29.jpg/330px-Kevin_De_Bruyne_USMNT_v_Belgium_Mar_28_2026-64_%28cropped%29.jpg"],
+  ["N'Golo Kanté","MID","Leicester City","2015-2023",90,"https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/N%27Golo_Kante_France_v_Senegal_16_June_2026-397.jpg/330px-N%27Golo_Kante_France_v_Senegal_16_June_2026-397.jpg"],
+  ["Yaya Touré","MID","Manchester City","2010-2018",89,"https://upload.wikimedia.org/wikipedia/commons/thumb/b/b7/Yaya_Tour%C3%A9_%28cropped%29.jpg/330px-Yaya_Tour%C3%A9_%28cropped%29.jpg"],
+  ["Xabi Alonso","MID","Liverpool","2004-2009",88,"https://upload.wikimedia.org/wikipedia/commons/thumb/b/b6/Los_Caminos_del_f%C3%BAtbol._Xabi_Alonso_%2839666778464%29_%28cropped%29.jpg/330px-Los_Caminos_del_f%C3%BAtbol._Xabi_Alonso_%2839666778464%29_%28cropped%29.jpg"],
+  ["Javier Mascherano","MID","Liverpool","2007-2010",84,"https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/Javier_Mascherano_NE_Revolution_Inter_Miami_7.9.25-040_%28cropped%29.jpg/330px-Javier_Mascherano_NE_Revolution_Inter_Miami_7.9.25-040_%28cropped%29.jpg"],
+  ["Claude Makélélé","MID","Chelsea","2003-2008",87,"https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/Claude_Mak%C3%A9l%C3%A9l%C3%A9_%2853557564951%29_%28cropped%29.jpg/330px-Claude_Mak%C3%A9l%C3%A9l%C3%A9_%2853557564951%29_%28cropped%29.jpg"],
+  ["Michael Essien","MID","Chelsea","2005-2012",85,"https://upload.wikimedia.org/wikipedia/commons/thumb/e/ea/Chelsea_Legends_1_Inter_Forever_4_%2828453496098%29_%28cropped%29.jpg/330px-Chelsea_Legends_1_Inter_Forever_4_%2828453496098%29_%28cropped%29.jpg"],
+  ["Robert Pirès","MID","Arsenal","2000-2006",88,"https://upload.wikimedia.org/wikipedia/commons/thumb/7/7f/Robert_Pires_2011.jpg/330px-Robert_Pires_2011.jpg"],
+  ["Freddie Ljungberg","MID","Arsenal","1998-2007",83,"https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Football_against_poverty_2014_-_Fredrik_Ljungberg.jpg/330px-Football_against_poverty_2014_-_Fredrik_Ljungberg.jpg"],
+  ["Emmanuel Petit","MID","Arsenal","1997-2000",84,"https://upload.wikimedia.org/wikipedia/commons/d/d7/Emmanuel_Petit.jpg"],
+  ["Gilberto Silva","MID","Arsenal","2002-2008",83,"https://upload.wikimedia.org/wikipedia/commons/thumb/c/c0/2021_-_Press_conferences_SM7_0168_%2851649502936%29_%28cropped%29.jpg/330px-2021_-_Press_conferences_SM7_0168_%2851649502936%29_%28cropped%29.jpg"],
+  ["Luka Modrić","MID","Tottenham Hotspur","2008-2012",87,"https://upload.wikimedia.org/wikipedia/commons/thumb/8/80/Luka_Modric_Croatia_v_Portugal_2_July_2026-055.jpg/330px-Luka_Modric_Croatia_v_Portugal_2_July_2026-055.jpg"],
+  ["Gareth Bale","MID","Tottenham Hotspur","2007-2013",89,"https://upload.wikimedia.org/wikipedia/commons/thumb/1/1e/2022_FIFA_World_Cup_United_States_1%E2%80%931_Wales_-_%2832%29_%28cropped%29.jpg/330px-2022_FIFA_World_Cup_United_States_1%E2%80%931_Wales_-_%2832%29_%28cropped%29.jpg"],
+  ["Christian Eriksen","MID","Tottenham Hotspur","2013-2020",85,"https://upload.wikimedia.org/wikipedia/commons/d/d8/EriksenTottenham2016%28cropped%29_2.jpg"],
+  ["Dele Alli","MID","Tottenham Hotspur","2015-2022",84,"https://upload.wikimedia.org/wikipedia/commons/thumb/7/7e/2020-03-10_Dele_Alli_%28cropped%29.jpg/330px-2020-03-10_Dele_Alli_%28cropped%29.jpg"],
+  ["Mesut Özil","MID","Arsenal","2013-2021",86,"https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Mesut_%C3%96zil_at_Baku_before_2019_UEFA_Europe_League_Final.jpg/330px-Mesut_%C3%96zil_at_Baku_before_2019_UEFA_Europe_League_Final.jpg"],
+  ["Santi Cazorla","MID","Arsenal","2012-2018",84,"https://upload.wikimedia.org/wikipedia/commons/thumb/a/af/Santi_Cazorla%2C_2012-08-18_%28cropped%29.jpg/330px-Santi_Cazorla%2C_2012-08-18_%28cropped%29.jpg"],
+  ["Eden Hazard","MID","Chelsea","2012-2019",91,"https://upload.wikimedia.org/wikipedia/commons/thumb/4/46/Eden_Hazard_at_Baku_before_2019_UEFA_Europe_League_Final.jpg/330px-Eden_Hazard_at_Baku_before_2019_UEFA_Europe_League_Final.jpg"],
+  ["Willian","MID","Chelsea","2013-2020",79,"https://upload.wikimedia.org/wikipedia/commons/thumb/1/19/Willian_20042025_%282%29.jpg/330px-Willian_20042025_%282%29.jpg"],
+  ["Riyad Mahrez","MID","Leicester City","2014-2023",84,"https://upload.wikimedia.org/wikipedia/commons/thumb/4/45/Mahrez_2021.jpg/330px-Mahrez_2021.jpg"],
+  ["Bernardo Silva","MID","Manchester City","2017-2026",88,"https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Bernardo_Silva_Croatia_v_Portugal_2_July_2026-238.jpg/330px-Bernardo_Silva_Croatia_v_Portugal_2_July_2026-238.jpg"],
+  ["Ilkay Gündoğan","MID","Manchester City","2016-2023",85,"https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/20180602_FIFA_Friendly_Match_Austria_vs._Germany_%C4%B0lkay_G%C3%BCndo%C4%9Fan_850_0728.jpg/330px-20180602_FIFA_Friendly_Match_Austria_vs._Germany_%C4%B0lkay_G%C3%BCndo%C4%9Fan_850_0728.jpg"],
+  ["Rodri","MID","Manchester City","2019-2026",90,"https://upload.wikimedia.org/wikipedia/commons/thumb/7/7a/Rodri_Argentina_v_Spain_19_July_2026-187_%28cropped%29.jpg/330px-Rodri_Argentina_v_Spain_19_July_2026-187_%28cropped%29.jpg"],
+  ["Bruno Fernandes","MID","Manchester United","2020-2026",87,"https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/Bruno_Fernandes_USMNT_v_Portugal_Mar_31_2026-27_%28cropped%29.jpg/330px-Bruno_Fernandes_USMNT_v_Portugal_Mar_31_2026-27_%28cropped%29.jpg"],
+  ["Jack Grealish","MID","Aston Villa","2014-2026",82,"https://upload.wikimedia.org/wikipedia/commons/thumb/a/a4/ManCity20240722-017_%28cropped%29.jpg/330px-ManCity20240722-017_%28cropped%29.jpg"],
+  ["James Milner","MID","Liverpool","2015-2023",79,"https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/2022-07-21_Fu%C3%9Fball%2C_M%C3%A4nner%2CFreundschaftsspiel%2C_RB_Leipzig_-_FC_Liverpool_1DX_2223_by_Stepro.jpg/330px-2022-07-21_Fu%C3%9Fball%2C_M%C3%A4nner%2CFreundschaftsspiel%2C_RB_Leipzig_-_FC_Liverpool_1DX_2223_by_Stepro.jpg"],
+  ["Georginio Wijnaldum","MID","Liverpool","2016-2021",80,"https://upload.wikimedia.org/wikipedia/commons/thumb/6/61/20160604_AUT_NED_8884_%28cropped%29.jpg/330px-20160604_AUT_NED_8884_%28cropped%29.jpg"],
+  ["Fabinho","MID","Liverpool","2018-2023",83,"https://upload.wikimedia.org/wikipedia/commons/thumb/d/d0/Fabinho_Brazil_V_Morocco_13_June_2026-70.jpg/330px-Fabinho_Brazil_V_Morocco_13_June_2026-70.jpg"],
+  ["Thiago Alcântara","MID","Liverpool","2020-2024",84,"https://upload.wikimedia.org/wikipedia/commons/thumb/b/bc/UEFA_EURO_qualifiers_Sweden_vs_Spain_20191015_Thiago_Alcantara_13_%28cropped%29.jpg/330px-UEFA_EURO_qualifiers_Sweden_vs_Spain_20191015_Thiago_Alcantara_13_%28cropped%29.jpg"],
+  ["Martin Ødegaard","MID","Arsenal","2021-2026",87,"https://upload.wikimedia.org/wikipedia/commons/thumb/1/13/Martin_Odegaard_France_v_Norway_26_June_26-014.jpg/330px-Martin_Odegaard_France_v_Norway_26_June_26-014.jpg"],
+  ["Declan Rice","MID","West Ham United","2017-2026",86,"https://upload.wikimedia.org/wikipedia/commons/thumb/5/5d/Declan_Rice_England_v_Ghana_23_June_2026-150.jpg/330px-Declan_Rice_England_v_Ghana_23_June_2026-150.jpg"],
+  ["Mason Mount","MID","Chelsea","2019-2026",79,"https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Mason_Mount_-_2021-12-08_-_FC_Zenit_Saint_Petersburg_v_Chelsea_F.C.jpg/330px-Mason_Mount_-_2021-12-08_-_FC_Zenit_Saint_Petersburg_v_Chelsea_F.C.jpg"],
+  ["Kai Havertz","MID","Chelsea","2020-2026",79,"https://upload.wikimedia.org/wikipedia/commons/thumb/7/76/Kai_Havertz_Ecuador_v_Germany_25_June_2026-118.jpg/330px-Kai_Havertz_Ecuador_v_Germany_25_June_2026-118.jpg"],
+  ["James Maddison","MID","Leicester City","2018-2026",82,"https://upload.wikimedia.org/wikipedia/commons/thumb/9/92/James_Maddison_pre-match_training_%28cropped%29.jpg/330px-James_Maddison_pre-match_training_%28cropped%29.jpg"],
+  ["Yves Bissouma","MID","Brighton & Hove Albion","2018-2026",77,"https://upload.wikimedia.org/wikipedia/commons/thumb/b/b4/Bissouma_2018.jpg/330px-Bissouma_2018.jpg"],
+  ["Moisés Caicedo","MID","Brighton & Hove Albion","2021-2026",80,"https://upload.wikimedia.org/wikipedia/commons/thumb/0/0e/Moises_Caicedo_Ecuador_v_Germany_25_June_2026-051_%28cropped%29.jpg/330px-Moises_Caicedo_Ecuador_v_Germany_25_June_2026-051_%28cropped%29.jpg"],
+  ["Alexis Mac Allister","MID","Liverpool","2023-2026",83,"https://upload.wikimedia.org/wikipedia/commons/thumb/d/db/Alexis_Mac_Allister_Argentina_v_Spain_19_July_2026-162_%28cropped%29.jpg/330px-Alexis_Mac_Allister_Argentina_v_Spain_19_July_2026-162_%28cropped%29.jpg"],
+  ["Cole Palmer","MID","Chelsea","2023-2026",86,"https://upload.wikimedia.org/wikipedia/commons/f/fb/Cole_Palmer_2025_FIFA_Club_World_Cup_Final.jpg"],
+  ["Phil Foden","MID","Manchester City","2017-2026",87,"https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/2023-10-04_Fu%C3%9Fball%2C_M%C3%A4nner%2C_UEFA_Champions_League%2C_RB_Leipzig_-_Manchester_City_FC_1DX_2613%2C_Phil_Foden.jpg/330px-2023-10-04_Fu%C3%9Fball%2C_M%C3%A4nner%2C_UEFA_Champions_League%2C_RB_Leipzig_-_Manchester_City_FC_1DX_2613%2C_Phil_Foden.jpg"],
+  ["Jordan Henderson","MID","Liverpool","2011-2023",81,"https://upload.wikimedia.org/wikipedia/commons/thumb/8/84/Jordan_Henderson_England_v_Ghana_23_June_2026-029_%28cropped%29.jpg/330px-Jordan_Henderson_England_v_Ghana_23_June_2026-029_%28cropped%29.jpg"],
+  ["Joe Cole","MID","Chelsea","2003-2010",82,"https://upload.wikimedia.org/wikipedia/commons/thumb/3/32/Joe_Cole2023.jpeg/330px-Joe_Cole2023.jpeg"],
+  ["Damien Duff","MID","Chelsea","2003-2006",82,"https://upload.wikimedia.org/wikipedia/commons/thumb/d/d7/Damien_Duff_2025.png/330px-Damien_Duff_2025.png"],
+  ["Arjen Robben","MID","Chelsea","2004-2007",85,"https://upload.wikimedia.org/wikipedia/commons/thumb/d/d1/2019147183036_2019-05-27_Fussball_1.FC_Kaiserslautern_vs_FC_Bayern_M%C3%BCnchen_-_Sven_-_1D_X_MK_II_-_0196_-_B70I8495_%28cropped%29.jpg/330px-2019147183036_2019-05-27_Fussball_1.FC_Kaiserslautern_vs_FC_Bayern_M%C3%BCnchen_-_Sven_-_1D_X_MK_II_-_0196_-_B70I8495_%28cropped%29.jpg"],
+  ["Juan Mata","MID","Chelsea","2011-2014",82,"https://upload.wikimedia.org/wikipedia/commons/thumb/5/57/Juan_Mata_Melbourne_Victory_Signing_Press_Conference_%28cropped%29.png/330px-Juan_Mata_Melbourne_Victory_Signing_Press_Conference_%28cropped%29.png"],
+  ["Pascal Groß","MID","Brighton & Hove Albion","2017-2026",78,"https://upload.wikimedia.org/wikipedia/commons/thumb/5/51/Pascal_Gross_Ecuador_v_Germany_25_June_2026-065.jpg/330px-Pascal_Gross_Ecuador_v_Germany_25_June_2026-065.jpg"],
+  ["Youri Tielemans","MID","Leicester City","2019-2023",81,"https://upload.wikimedia.org/wikipedia/commons/thumb/f/ff/Youri_Tielemans_USMNT_v_Belgium_Mar_28_2026-20_%28cropped%29.jpg/330px-Youri_Tielemans_USMNT_v_Belgium_Mar_28_2026-20_%28cropped%29.jpg"],
+  ["Conor Gallagher","MID","Chelsea","2021-2026",78,"https://upload.wikimedia.org/wikipedia/commons/thumb/b/b0/Conor_Gallagher_2024_%28cropped%29.jpg/330px-Conor_Gallagher_2024_%28cropped%29.jpg"],
+  // ---- Forwards ----
+  ["Thierry Henry","FWD","Arsenal","1999-2007",98,"https://upload.wikimedia.org/wikipedia/commons/thumb/b/b9/Thierry_Henry_%2851649035951%29_%28cropped%29.jpg/330px-Thierry_Henry_%2851649035951%29_%28cropped%29.jpg"],
+  ["Alan Shearer","FWD","Blackburn Rovers","1992-2006",95,"https://upload.wikimedia.org/wikipedia/commons/b/ba/Alan_Shearer_2008.jpg"],
+  ["Dennis Bergkamp","FWD","Arsenal","1995-2006",94,"https://upload.wikimedia.org/wikipedia/commons/7/75/Dennis_Bergkamp_2014_%28cropped%29.jpg"],
+  ["Eric Cantona","FWD","Manchester United","1992-1997",91,"https://upload.wikimedia.org/wikipedia/commons/thumb/f/f4/Eric_Cantona_Cannes_2009.jpg/330px-Eric_Cantona_Cannes_2009.jpg"],
+  ["Didier Drogba","FWD","Chelsea","2004-2015",93,"https://upload.wikimedia.org/wikipedia/commons/thumb/7/77/Didier_Drogba_%282019%29_%28cropped2%29.jpg/330px-Didier_Drogba_%282019%29_%28cropped2%29.jpg"],
+  ["Sergio Agüero","FWD","Manchester City","2011-2021",94,"https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/Ag%C3%BCero_in_2018.jpg/330px-Ag%C3%BCero_in_2018.jpg"],
+  ["Luis Suárez","FWD","Liverpool","2011-2014",93,"https://upload.wikimedia.org/wikipedia/commons/thumb/f/f7/Luis_Su%C3%A1rez_2026_%28cropped%29.jpg/330px-Luis_Su%C3%A1rez_2026_%28cropped%29.jpg"],
+  ["Robin van Persie","FWD","Arsenal","2004-2013",91,"https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/Loco-Fener_%2810%29.jpg/330px-Loco-Fener_%2810%29.jpg"],
+  ["Cristiano Ronaldo","FWD","Manchester United","2003-2009",97,"https://upload.wikimedia.org/wikipedia/commons/thumb/2/26/Cristiano_Ronaldo_Croatia_v_Portugal_2_July_2026-075_%28cropped%29.jpg/330px-Cristiano_Ronaldo_Croatia_v_Portugal_2_July_2026-075_%28cropped%29.jpg"],
+  ["Wayne Rooney","FWD","Manchester United","2004-2017",92,"https://upload.wikimedia.org/wikipedia/commons/thumb/9/9d/Wayne_Rooney_%2850121495731%29_%28cropped%29.jpg/330px-Wayne_Rooney_%2850121495731%29_%28cropped%29.jpg"],
+  ["Ruud van Nistelrooy","FWD","Manchester United","2001-2006",91,"https://upload.wikimedia.org/wikipedia/commons/thumb/9/9d/Ruud_van_Nistelrooy_2017.jpg/330px-Ruud_van_Nistelrooy_2017.jpg"],
+  ["Andriy Shevchenko","FWD","Chelsea","2006-2009",78,"https://upload.wikimedia.org/wikipedia/commons/thumb/2/25/%D0%90%D0%BD%D0%B4%D1%80%D1%96%D0%B9_%D0%A8%D0%B5%D0%B2%D1%87%D0%B5%D0%BD%D0%BA%D0%BE_2024_%28cropped%29.png/330px-%D0%90%D0%BD%D0%B4%D1%80%D1%96%D0%B9_%D0%A8%D0%B5%D0%B2%D1%87%D0%B5%D0%BD%D0%BA%D0%BE_2024_%28cropped%29.png"],
+  ["Fernando Torres","FWD","Liverpool","2007-2011",87,"https://upload.wikimedia.org/wikipedia/commons/5/57/Fernando_Torres_2017.jpg"],
+  ["Michael Owen","FWD","Liverpool","1997-2004",87,"https://upload.wikimedia.org/wikipedia/commons/thumb/2/24/Michael_Owen.jpg/330px-Michael_Owen.jpg"],
+  ["Ian Wright","FWD","Arsenal","1992-1998",89,"https://upload.wikimedia.org/wikipedia/commons/thumb/7/70/Ian_Wright_at_SXSW_London_June_2025_%28cropped%29.jpg/330px-Ian_Wright_at_SXSW_London_June_2025_%28cropped%29.jpg"],
+  ["Les Ferdinand","FWD","Newcastle United","1992-1997",82,"https://upload.wikimedia.org/wikipedia/commons/thumb/b/ba/LesFerdinandMay2015_%28cropped%29.JPG/330px-LesFerdinandMay2015_%28cropped%29.JPG"],
+  ["Teddy Sheringham","FWD","Manchester United","1992-2001",84,"https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/Teddy_Sheringham_-_53492983124_%28original%29.jpg/330px-Teddy_Sheringham_-_53492983124_%28original%29.jpg"],
+  ["Jimmy Floyd Hasselbaink","FWD","Chelsea","1998-2004",83,"https://upload.wikimedia.org/wikipedia/commons/thumb/7/7e/Hasselbaink_luton_2023.jpg/330px-Hasselbaink_luton_2023.jpg"],
+  ["Nicolas Anelka","FWD","Chelsea","1997-2012",83,"https://upload.wikimedia.org/wikipedia/commons/3/36/Nicolas_Anelka_4720.jpg"],
+  ["Emmanuel Adebayor","FWD","Arsenal","2006-2010",82,"https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/Emmanuel_Adebayor_-_Lech_-_Manchester_026.jpg/330px-Emmanuel_Adebayor_-_Lech_-_Manchester_026.jpg"],
+  ["Carlos Tevez","FWD","Manchester United","2007-2013",87,"https://upload.wikimedia.org/wikipedia/commons/thumb/3/31/Carlos_Tevez_with_Argentina_November_2014_%28cropped%29.jpg/330px-Carlos_Tevez_with_Argentina_November_2014_%28cropped%29.jpg"],
+  ["Harry Kane","FWD","Tottenham Hotspur","2011-2023",93,"https://upload.wikimedia.org/wikipedia/commons/thumb/a/a3/Harry_Kane_England_v_Ghana_23_June_2026-219_%28cropped%29.jpg/330px-Harry_Kane_England_v_Ghana_23_June_2026-219_%28cropped%29.jpg"],
+  ["Mohamed Salah","FWD","Liverpool","2017-2026",95,"https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Mohamed_Salah_Argentina_v_Egypt_7_July_2026-163_%28cropped%29.jpg/330px-Mohamed_Salah_Argentina_v_Egypt_7_July_2026-163_%28cropped%29.jpg"],
+  ["Sadio Mané","FWD","Liverpool","2016-2022",89,"https://upload.wikimedia.org/wikipedia/commons/thumb/9/92/Sadio_Mane_France_v_Senegal_16_June_2026-450.jpg/330px-Sadio_Mane_France_v_Senegal_16_June_2026-450.jpg"],
+  ["Roberto Firmino","FWD","Liverpool","2015-2023",84,"https://upload.wikimedia.org/wikipedia/commons/thumb/0/00/20180610_FIFA_Friendly_Match_Austria_vs._Brazil_Roberto_Firmino_850_1557.jpg/330px-20180610_FIFA_Friendly_Match_Austria_vs._Brazil_Roberto_Firmino_850_1557.jpg"],
+  ["Erling Haaland","FWD","Manchester City","2022-2026",96,"https://upload.wikimedia.org/wikipedia/commons/thumb/4/43/Erling_Haaland_Morocco_v_Norway_7_June_2026-51.jpg/330px-Erling_Haaland_Morocco_v_Norway_7_June_2026-51.jpg"],
+  ["Son Heung-min","FWD","Tottenham Hotspur","2015-2026",90,"https://upload.wikimedia.org/wikipedia/commons/thumb/b/b0/BFA_2023_-2_Heung-Min_Son_%28cropped%29.jpg/330px-BFA_2023_-2_Heung-Min_Son_%28cropped%29.jpg"],
+  ["Raheem Sterling","FWD","Manchester City","2015-2026",84,"https://upload.wikimedia.org/wikipedia/commons/thumb/3/3f/Raheem_Sterling_2018.jpg/330px-Raheem_Sterling_2018.jpg"],
+  ["Jamie Vardy","FWD","Leicester City","2012-2026",85,"https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Jamie_Vardy_2018_%28cropped%29.jpg/330px-Jamie_Vardy_2018_%28cropped%29.jpg"],
+  ["Gabriel Jesus","FWD","Manchester City","2017-2026",81,"https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/20180610_FIFA_Friendly_Match_Austria_vs._Brazil_Gabriel_Jesus_850_1688.jpg/330px-20180610_FIFA_Friendly_Match_Austria_vs._Brazil_Gabriel_Jesus_850_1688.jpg"],
+  ["Ollie Watkins","FWD","Aston Villa","2020-2026",83,"https://upload.wikimedia.org/wikipedia/commons/thumb/4/4a/Ollie_Watkins_England_v_Ghana_23_June_2026-035.jpg/330px-Ollie_Watkins_England_v_Ghana_23_June_2026-035.jpg"],
+  ["Alexander Isak","FWD","Newcastle United","2022-2026",86,"https://upload.wikimedia.org/wikipedia/commons/thumb/3/32/Alexander_Isak_-_Sweden_-_Greece21_%28cropped%29.jpg/330px-Alexander_Isak_-_Sweden_-_Greece21_%28cropped%29.jpg"],
+  ["Bukayo Saka","FWD","Arsenal","2019-2026",89,"https://upload.wikimedia.org/wikipedia/commons/thumb/1/1e/Bukayo_Saka_England_v_Panama_27_June_26-108_%28cropped%29.jpg/330px-Bukayo_Saka_England_v_Panama_27_June_26-108_%28cropped%29.jpg"],
+  ["Gabriel Martinelli","FWD","Arsenal","2019-2026",82,"https://upload.wikimedia.org/wikipedia/commons/thumb/8/81/Gabriel_Martinelli_Brazil_V_Morocco_13_June_2026-144.jpg/330px-Gabriel_Martinelli_Brazil_V_Morocco_13_June_2026-144.jpg"],
+];
+
+function tierForRating(r) {
+  if (r >= 90) return "Icon";
+  if (r >= 84) return "Elite";
+  if (r >= 78) return "Star";
+  if (r >= 70) return "Quality";
+  return "Rotation";
+}
+const TIER_COLOR = {
+  Icon: "#E8B23D", Elite: "#8B7BE8", Star: "#3FA796", Quality: "#4C8BF5", Rotation: "#7A8399",
+};
+const POS_COLOR = { GK: "#D9A441", DEF: "#3FA796", MID: "#5B6EE8", FWD: "#D6455E" };
+const POS_LABEL = { GK: "Goalkeeper", DEF: "Defender", MID: "Midfielder", FWD: "Forward" };
+
+// Auction base price (£M). Mildly convex in rating (top Icons cost more
+// per point than mid-table Quality players do) but capped well short of
+// the old curve, which let a single Icon eat ~30% of a full budget on its
+// own. Calibrated against the actual 163-player pool (ratings 76-98, mean
+// ~85.5): an "average" full XI now costs roughly a full default budget
+// (~£550M for 11 players), not 2-3x it — buying a genuine Icon (98) costs
+// about 2x an average XI slot, not 6-7x.
+function basePriceForRating(r) {
+  const t = Math.max(0, Math.min(1, (r - 58) / (99 - 58)));
+  const price = 1.5 + Math.pow(t, 1.7) * 93.5;
+  return Math.max(1.5, Math.round(price * 2) / 2);
+}
+
+const PLAYERS = RAW_PLAYERS.map(([name, position, club, era, rating, img], i) => ({
+  id: i + 1, name, position, club, era, rating, img: img || null,
+  tier: tierForRating(rating),
+  basePrice: basePriceForRating(rating),
+}));
+const PLAYERS_BY_ID = {};
+PLAYERS.forEach((p) => (PLAYERS_BY_ID[p.id] = p));
+
+/* =========================================================================
+   SQUAD RULES
+========================================================================= */
+const SQUAD_SIZE = 11;
+const MIN_PRICE_FLOOR = 1.5;
+const LOT_DURATION_MS = 8000;
+
+// Each manager locks in a formation before the auction starts, which sets
+// the EXACT position shape their 11 must fill (not just minimums — a
+// 3-5-2 squad has exactly 3 defenders, never 4). In the match engine each
+// formation trades attack strength for defense (or vice versa) or lets a
+// strong midfield lift both ends a little — tuned via Monte Carlo
+// (tune-formations.js) so no formation dominates in a fair fight; the
+// real reward for matching a formation to your squad is economic: it
+// lets you commit auction budget to the positions that formation plays
+// more of, instead of splitting money across a shape you didn't want.
+const FORMATIONS = {
+  "4-4-2": { label: "4-4-2", tag: "Balanced", counts: { GK: 1, DEF: 4, MID: 4, FWD: 2 }, attackMult: 1.0, defenseMult: 1.0, desc: "No bonus, no penalty — even spread across the pitch." },
+  "4-3-3": { label: "4-3-3", tag: "Attacking", counts: { GK: 1, DEF: 4, MID: 3, FWD: 3 }, attackMult: 1.07, defenseMult: 0.93, desc: "+7% attack, -7% defense — three forwards, go for goals." },
+  "5-3-2": { label: "5-3-2", tag: "Defensive", counts: { GK: 1, DEF: 5, MID: 3, FWD: 2 }, attackMult: 0.93, defenseMult: 1.07, desc: "+7% defense, -7% attack — five at the back, hard to beat." },
+  "3-5-2": { label: "3-5-2", tag: "Midfield Control", counts: { GK: 1, DEF: 3, MID: 5, FWD: 2 }, midControl: 0.05, desc: "A strong midfield lifts both ends slightly — thin at the back." },
+  "4-2-3-1": { label: "4-2-3-1", tag: "Possession", counts: { GK: 1, DEF: 4, MID: 5, FWD: 1 }, midControl: 0.04, desc: "Extra midfielder for control, a lone striker leads the line." },
+};
+const DEFAULT_FORMATION = "4-4-2";
+
+function positionCounts(squad) {
+  const c = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  squad.forEach((p) => c[p.position]++);
+  return c;
+}
+// Whether `manager` can legally place a bid of `amount` for `player` given
+// their current squad/budget and formation shape — checks that this
+// position's exact quota isn't already full, budget, and that enough
+// slots + money remain afterward to still fill every other required
+// position (so a manager can never bid themselves into an unfillable
+// squad for the formation they picked).
+function canBid(squad, budget, player, amount, counts) {
+  if (squad.length >= SQUAD_SIZE) return false;
+  const c = positionCounts(squad);
+  if (c[player.position] >= counts[player.position]) return false;
+  if (amount > budget + 1e-9) return false;
+  const hypothetical = [...squad, player];
+  const hc = positionCounts(hypothetical);
+  const neededAfter = Object.keys(counts).reduce((s, pos) => s + Math.max(0, counts[pos] - hc[pos]), 0);
+  const slotsLeftAfter = SQUAD_SIZE - hypothetical.length;
+  if (slotsLeftAfter < neededAfter) return false;
+  const budgetAfter = budget - amount;
+  if (budgetAfter < slotsLeftAfter * MIN_PRICE_FLOOR - 1e-9) return false;
+  return true;
+}
+function squadIsComplete(squad, counts) {
+  if (squad.length !== SQUAD_SIZE) return false;
+  const c = positionCounts(squad);
+  return Object.keys(counts).every((pos) => c[pos] >= counts[pos]);
+}
+
+function bidIncrement(amount) {
+  if (amount < 10) return 0.5;
+  if (amount < 50) return 1;
+  if (amount < 100) return 2.5;
+  return 5;
+}
+function nextBidAmount(currentBid, basePrice) {
+  if (currentBid == null) return basePrice;
+  return Math.round((currentBid + bidIncrement(currentBid)) * 2) / 2;
+}
+function fmtM(n) {
+  if (n == null) return "—";
+  return "£" + (Math.round(n * 10) / 10).toFixed(n % 1 === 0 ? 0 : 1) + "M";
+}
+function shuffle(arr) {
+  return [...arr].sort(() => Math.random() - 0.5);
+}
+function round1(n) {
+  return Math.round(n * 10) / 10;
+}
+
+// Deterministic per-player "sub-stats" (seeded on the player's id, so
+// they're stable across renders/sessions rather than reshuffling) that
+// break the single overall rating into a small position-appropriate
+// profile — gives bidders more to weigh than one number. Averages back
+// out close to the overall rating; not a second data source, just a
+// readable decomposition of it.
+function seededRand(seed) {
+  let s = seed % 2147483647;
+  if (s <= 0) s += 2147483646;
+  return function () { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
+}
+const STAT_PROFILES = {
+  GK: { REF: 6, HAN: 2, KIC: -3, POS: 3 },
+  DEF: { PAC: -3, ATT: -15, PAS: 0, DEF: 11 },
+  MID: { PAC: -1, ATT: -4, PAS: 9, DEF: 2 },
+  FWD: { PAC: 6, ATT: 11, PAS: -3, DEF: -15 },
+};
+function detailedStats(player) {
+  const rand = seededRand(player.id * 9301 + 49297);
+  const profile = STAT_PROFILES[player.position];
+  const stats = {};
+  Object.keys(profile).forEach((k) => {
+    const jitter = Math.round((rand() - 0.5) * 8);
+    stats[k] = Math.max(35, Math.min(99, Math.round(player.rating + profile[k] + jitter)));
+  });
+  return stats;
+}
+const STAT_LABEL = { REF: "Reflexes", HAN: "Handling", KIC: "Kicking", POS: "Positioning", PAC: "Pace", ATT: "Attack", PAS: "Passing", DEF: "Defending" };
+
+/* =========================================================================
+   LEAGUE / MATCH SIMULATION
+========================================================================= */
+// A line's rating is a blend of a power-mean over its players (rewards
+// squad depth — several good players beats one great one propped up by
+// scrubs) and its single best player (guarantees one marquee auction
+// buy is always clearly felt, not diluted away by 2-3 average
+// teammates). Tuned via Monte Carlo simulation (see project notes): with
+// this blend, swapping one weak player for one Icon produces roughly the
+// same match impact as upgrading a whole tier's worth of squad depth —
+// which is what "the auction result should matter" means in practice.
+const LINE_POWER = 1.5;
+const BEST_PLAYER_WEIGHT = 0.4;
+function powerMean(ratings, p) {
+  if (!ratings.length) return 62;
+  let numer = 0, denom = 0;
+  ratings.forEach((r) => { const w = Math.pow(r, p); numer += w * r; denom += w; });
+  return numer / denom;
+}
+function lineRating(ratings) {
+  if (!ratings.length) return 62;
+  const pm = powerMean(ratings, LINE_POWER);
+  const best = Math.max(...ratings);
+  return pm * (1 - BEST_PLAYER_WEIGHT) + best * BEST_PLAYER_WEIGHT;
+}
+function teamRatings(squad, formationKey) {
+  const gk = squad.find((p) => p.position === "GK");
+  const def = squad.filter((p) => p.position === "DEF").map((p) => p.rating);
+  const mid = squad.filter((p) => p.position === "MID").map((p) => p.rating);
+  const fwd = squad.filter((p) => p.position === "FWD").map((p) => p.rating);
+  const fwdLine = lineRating(fwd);
+  const midLine = lineRating(mid);
+  const defLine = lineRating(def);
+  const gkLine = gk ? gk.rating : 62;
+  let attack = fwdLine * 0.6 + midLine * 0.4;
+  let defense = defLine * 0.65 + gkLine * 0.35;
+  const f = FORMATIONS[formationKey] || FORMATIONS[DEFAULT_FORMATION];
+  if (f.attackMult) attack *= f.attackMult;
+  if (f.defenseMult) defense *= f.defenseMult;
+  if (f.midControl) {
+    const bonus = (midLine - 78) * f.midControl;
+    attack += bonus;
+    defense += bonus * 0.8;
+  }
+  const overall = squad.length ? squad.reduce((s, p) => s + p.rating, 0) / squad.length : 62;
+  return { attack, defense, overall };
+}
+function expectedGoals(myAttack, oppDefense, isHome) {
+  const diff = myAttack - oppDefense;
+  let xg = 1.3 + diff / 15;
+  if (isHome) xg += 0.18;
+  return Math.max(0.1, xg);
+}
+// Knuth's Poisson sampler — gives a realistic scatter of scorelines around
+// the expected-goals value instead of always rounding to the same number.
+function poissonSample(lambda) {
+  const L = Math.exp(-lambda);
+  let k = 0, p = 1;
+  do { k++; p *= Math.random(); } while (p > L);
+  return k - 1;
+}
+function pickScorer(squad) {
+  const eligible = squad.filter((p) => p.position === "FWD" || p.position === "MID");
+  const pool = eligible.length ? eligible : squad;
+  const weights = pool.map((p) => Math.pow(1.06, p.rating));
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = Math.random() * total;
+  for (let i = 0; i < pool.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return pool[i];
+  }
+  return pool[pool.length - 1];
+}
+function simulateFixture(homeSquad, awaySquad, homeName, awayName, homeFormation, awayFormation) {
+  const h = teamRatings(homeSquad, homeFormation), a = teamRatings(awaySquad, awayFormation);
+  const hxg = expectedGoals(h.attack, a.defense, true);
+  const axg = expectedGoals(a.attack, h.defense, false);
+  const homeGoals = poissonSample(hxg);
+  const awayGoals = poissonSample(axg);
+  const log = [];
+  const events = [];
+  for (let i = 0; i < homeGoals; i++) events.push({ side: "home", minute: 1 + Math.floor(Math.random() * 89), scorer: pickScorer(homeSquad) });
+  for (let i = 0; i < awayGoals; i++) events.push({ side: "away", minute: 1 + Math.floor(Math.random() * 89), scorer: pickScorer(awaySquad) });
+  events.sort((x, y) => x.minute - y.minute);
+  events.forEach((e) => {
+    const team = e.side === "home" ? homeName : awayName;
+    log.push(`⚽ ${e.minute}' — ${e.scorer.name} scores for ${team}!`);
+  });
+  if (!events.length) log.push("A goalless stalemate — both defenses held firm.");
+  log.push(`Full time: ${homeName} ${homeGoals} - ${awayGoals} ${awayName}`);
+  return { homeGoals, awayGoals, log };
+}
+// Circle-method double round robin: every pair of teams meets twice (home
+// & away), matching a real league season rather than a knockout bracket.
+function generateFixtures(teamIds) {
+  const ids = [...teamIds];
+  const hasBye = ids.length % 2 !== 0;
+  if (hasBye) ids.push(null);
+  const n = ids.length;
+  const rounds = [];
+  const arr = [...ids];
+  for (let r = 0; r < n - 1; r++) {
+    const round = [];
+    for (let i = 0; i < n / 2; i++) {
+      const t1 = arr[i], t2 = arr[n - 1 - i];
+      if (t1 != null && t2 != null) round.push(r % 2 === 0 ? [t1, t2] : [t2, t1]);
+    }
+    rounds.push(round);
+    arr.splice(1, 0, arr.pop());
+  }
+  const fixtures = [];
+  let id = 0;
+  rounds.forEach((round) => round.forEach(([home, away]) => {
+    fixtures.push({ id: `f${id++}`, home, away, leg: 1, played: false, homeGoals: null, awayGoals: null, log: [] });
+  }));
+  rounds.forEach((round) => round.forEach(([home, away]) => {
+    fixtures.push({ id: `f${id++}`, home: away, away: home, leg: 2, played: false, homeGoals: null, awayGoals: null, log: [] });
+  }));
+  return fixtures;
+}
+function computeTable(teamIds, fixtures) {
+  const table = {};
+  teamIds.forEach((t) => (table[t] = { id: t, played: 0, won: 0, draw: 0, lost: 0, gf: 0, ga: 0, pts: 0 }));
+  fixtures.filter((f) => f.played).forEach((f) => {
+    const h = table[f.home], a = table[f.away];
+    if (!h || !a) return;
+    h.played++; a.played++;
+    h.gf += f.homeGoals; h.ga += f.awayGoals;
+    a.gf += f.awayGoals; a.ga += f.homeGoals;
+    if (f.homeGoals > f.awayGoals) { h.won++; h.pts += 3; a.lost++; }
+    else if (f.homeGoals < f.awayGoals) { a.won++; a.pts += 3; h.lost++; }
+    else { h.draw++; a.draw++; h.pts += 1; a.pts += 1; }
+  });
+  return Object.values(table).sort((x, y) => y.pts - x.pts || (y.gf - y.ga) - (x.gf - x.ga) || y.gf - x.gf);
+}
+
+/* =========================================================================
+   AI MANAGER LOGIC — runs entirely client-side, on whichever connected
+   browser tab's poll tick happens to notice it's the AI's move, and writes
+   through the same commit path a human action would. No server game logic
+   exists; this mirrors how the sibling draft-battle games run their bots.
+========================================================================= */
+const AI_NAMES = ["Gaffer Bot", "Tactics Bot", "Scout Bot", "Ledger Bot", "Rotation Bot", "Wildcard Bot"];
+function randomFormationKey() {
+  const keys = Object.keys(FORMATIONS);
+  return keys[Math.floor(Math.random() * keys.length)];
+}
+function aiWillingness(manager, squad, player, counts) {
+  const c = positionCounts(squad);
+  const underMin = (counts[player.position] || 0) > c[player.position];
+  const needMultiplier = underMin ? 1.35 : squad.length < SQUAD_SIZE * 0.6 ? 1.05 : 0.75;
+  const randomFactor = 1.1 + Math.random() * 0.55;
+  return player.basePrice * needMultiplier * randomFactor;
+}
+function aiDecision(manager, squad, budget, player, currentBid, basePrice, counts) {
+  const amount = nextBidAmount(currentBid, basePrice);
+  if (!canBid(squad, budget, player, amount, counts)) return null;
+  const willingness = aiWillingness(manager, squad, player, counts);
+  if (amount > willingness) return null;
+  if (Math.random() < 0.12) return null; // occasional early pass keeps AI unpredictable
+  return amount;
+}
+
+/* =========================================================================
+   SHARED STATE (server-backed KV store, polling sync)
+========================================================================= */
+async function storageGet(key, shared = true) {
+  try {
+    if (!shared) {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    }
+    const res = await fetch(`/api/kv/${encodeURIComponent(key)}`);
+    if (res.status === 404) return null;
+    if (!res.ok) return null;
+    const r = await res.json();
+    return r && r.value !== undefined ? JSON.parse(r.value) : null;
+  } catch { return null; }
+}
+async function storageSet(key, value, shared = true) {
+  try {
+    if (!shared) { localStorage.setItem(key, JSON.stringify(value)); return; }
+    await fetch(`/api/kv/${encodeURIComponent(key)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: JSON.stringify(value) }),
+    });
+  } catch (e) { console.error("storage set failed", e); }
+}
+async function commitIfRevMatches(key, fresh, updated) {
+  const check = await storageGet(key);
+  if (!check || check.rev !== fresh.rev) return false;
+  await storageSet(key, updated);
+  return true;
+}
+const roomKey = (code) => `pla-room-${code}`;
+const PERSONAL_ID_KEY = "pla-my-id";
+const PERSONAL_NAME_KEY = "pla-my-name";
+const ACTIVE_ROOM_KEY = "pla-active-room";
+
+function genCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let c = "";
+  for (let i = 0; i < 5; i++) c += chars[Math.floor(Math.random() * chars.length)];
+  return c;
+}
+function genId() {
+  return "p" + Math.random().toString(36).slice(2, 10);
+}
+const MANAGER_COLORS = ["#D64545", "#3FA796", "#4C8BF5", "#E8B23D", "#8B7BE8", "#D6816B", "#5FC48D", "#E86BA8", "#6BA8E8", "#C9A227"];
+
+function makeLot(footballerId, lotNumber) {
+  const player = PLAYERS_BY_ID[footballerId];
+  return {
+    footballerId, lotNumber,
+    basePrice: player.basePrice,
+    currentBid: null,
+    currentBidderId: null,
+    passed: [],
+    deadlineTs: Date.now() + LOT_DURATION_MS,
+  };
+}
+
+function resolveLot(room) {
+  const lot = room.currentLot;
+  const player = PLAYERS_BY_ID[lot.footballerId];
+  const squads = { ...room.squads };
+  const remainingBudget = { ...room.remainingBudget };
+  const soldLog = [...room.soldLog];
+  let unsoldIds = [...room.unsoldIds];
+  if (lot.currentBidderId) {
+    const buyer = lot.currentBidderId;
+    squads[buyer] = [...(squads[buyer] || []), player];
+    remainingBudget[buyer] = round1(remainingBudget[buyer] - lot.currentBid);
+    soldLog.unshift({ footballerId: player.id, buyerId: buyer, price: lot.currentBid, lotNumber: lot.lotNumber });
+  } else {
+    unsoldIds.push(player.id);
+    soldLog.unshift({ footballerId: player.id, buyerId: null, price: null, lotNumber: lot.lotNumber });
+  }
+  return { ...room, squads, remainingBudget, soldLog, unsoldIds };
+}
+// Every manager's formation counts, keyed by id — falls back to the
+// default formation for anyone who somehow has none set (shouldn't
+// happen once the lobby always seeds one on join).
+function countsFor(room, managerId) {
+  const key = (room.formations && room.formations[managerId]) || DEFAULT_FORMATION;
+  return FORMATIONS[key].counts;
+}
+// Absolute safety net: if the pool (plus recycled unsold lots) runs dry
+// before every squad is full, force-fill remaining slots from whatever
+// eligible players are left so no manager gets stuck with an invalid team.
+function forceFillIncompleteSquads(room) {
+  let squads = { ...room.squads };
+  let remainingBudget = { ...room.remainingBudget };
+  const ownedIds = new Set(Object.values(squads).flat().map((p) => p.id));
+  room.players.forEach((m) => {
+    let squad = squads[m.id] || [];
+    let budget = remainingBudget[m.id] || 0;
+    const counts = countsFor(room, m.id);
+    let guard = 0;
+    while (!squadIsComplete(squad, counts) && squad.length < SQUAD_SIZE && guard < 400) {
+      guard++;
+      const c = positionCounts(squad);
+      const neededPos = Object.keys(counts).find((pos) => c[pos] < counts[pos]) || "DEF";
+      const candidate = PLAYERS.filter((p) => !ownedIds.has(p.id) && p.position === neededPos)
+        .sort((a, b) => a.basePrice - b.basePrice)[0]
+        || PLAYERS.filter((p) => !ownedIds.has(p.id)).sort((a, b) => a.basePrice - b.basePrice)[0];
+      if (!candidate) break;
+      ownedIds.add(candidate.id);
+      const price = Math.min(candidate.basePrice, Math.max(0, budget));
+      squad = [...squad, candidate];
+      budget = round1(budget - price);
+    }
+    squads[m.id] = squad;
+    remainingBudget[m.id] = budget;
+  });
+  return { ...room, squads, remainingBudget };
+}
+function advanceAuction(room) {
+  let updated = resolveLot(room);
+  const allFull = updated.players.every((m) => squadIsComplete(updated.squads[m.id] || [], countsFor(updated, m.id)));
+  if (allFull) {
+    const teamIds = updated.players.map((p) => p.id);
+    return { ...updated, status: "league", currentLot: null, fixtures: generateFixtures(teamIds) };
+  }
+  let pool = updated.pool;
+  let nextIndex = room.lotIndex + 1;
+  if (nextIndex >= pool.length) {
+    if (updated.unsoldIds.length > 0) {
+      pool = [...pool, ...shuffle(updated.unsoldIds)];
+      updated = { ...updated, unsoldIds: [] };
+    } else {
+      updated = forceFillIncompleteSquads(updated);
+      const teamIds = updated.players.map((p) => p.id);
+      return { ...updated, status: "league", currentLot: null, fixtures: generateFixtures(teamIds) };
+    }
+  }
+  const nextPlayerId = pool[nextIndex];
+  return { ...updated, pool, lotIndex: nextIndex, currentLot: makeLot(nextPlayerId, nextIndex + 1) };
+}
+function lotShouldResolve(room) {
+  const lot = room.currentLot;
+  if (!lot) return false;
+  const player = PLAYERS_BY_ID[lot.footballerId];
+  const askAmount = nextBidAmount(lot.currentBid, lot.basePrice);
+  const eligible = room.players.filter((m) =>
+    !lot.passed.includes(m.id) &&
+    m.id !== lot.currentBidderId &&
+    canBid(room.squads[m.id] || [], room.remainingBudget[m.id] || 0, player, askAmount, countsFor(room, m.id))
+  );
+  if (lot.currentBidderId) {
+    if (eligible.length === 0) return true;
+  } else if (eligible.length === 0) {
+    return true;
+  }
+  if (Date.now() >= lot.deadlineTs) return true;
+  return false;
+}
+
+/* =========================================================================
+   PRESENTATIONAL BITS
+========================================================================= */
+function PositionPill({ pos }) {
+  return (
+    <span style={{ background: POS_COLOR[pos] + "26", color: POS_COLOR[pos], border: `1px solid ${POS_COLOR[pos]}55` }}
+      className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide">
+      {pos}
+    </span>
+  );
+}
+function TierBadge({ tier }) {
+  return (
+    <span style={{ background: TIER_COLOR[tier] + "22", color: TIER_COLOR[tier], border: `1px solid ${TIER_COLOR[tier]}55` }}
+      className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide">
+      {tier}
+    </span>
+  );
+}
+function ManagerAvatar({ manager, size }) {
+  const color = MANAGER_COLORS[manager.colorIdx % MANAGER_COLORS.length];
+  const dim = size || 32;
+  const initials = manager.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+  return (
+    <div style={{ width: dim, height: dim, background: color, color: "#0A0F1A", fontSize: dim * 0.38 }}
+      className="rounded-full flex items-center justify-center font-black shrink-0">
+      {initials}
+      {manager.isAI ? <span className="ml-0.5">🤖</span> : null}
+    </div>
+  );
+}
+// Real photo when we have one (sourced from Wikipedia at build time),
+// with a couple of silent retries for a transiently-flaky CDN fetch
+// before falling back to the colored position badge — same resilience
+// pattern as the sibling draft-battle games' sprite loader, just without
+// a second fallback image since there's only ever one photo per player.
+function useResilientImg(src, maxAttempts) {
+  const [attempt, setAttempt] = useState(0);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setAttempt(0); setFailed(false); }, [src]);
+  const onError = () => {
+    if (attempt < (maxAttempts || 2)) setTimeout(() => setAttempt((a) => a + 1), 400 * (attempt + 1));
+    else setFailed(true);
+  };
+  return { failed, onError, attempt };
+}
+function PlayerPhoto({ player, size, rounded }) {
+  const { failed, onError, attempt } = useResilientImg(player.img);
+  const dim = size || 36;
+  if (!player.img || failed) {
+    return (
+      <div style={{ width: dim, height: dim, background: POS_COLOR[player.position] }}
+        className={`flex items-center justify-center font-black text-[#0A0F1A] shrink-0 ${rounded ? "rounded-full" : "rounded-lg"}`}>
+        <span style={{ fontSize: dim * 0.32 }}>{player.position}</span>
+      </div>
+    );
+  }
+  return (
+    <img key={attempt} src={player.img} alt={player.name} onError={onError}
+      style={{ width: dim, height: dim, objectFit: "cover", background: "#1c2536" }}
+      className={`shrink-0 ${rounded ? "rounded-full" : "rounded-lg"}`} />
+  );
+}
+function PlayerCard({ player, compact }) {
+  if (!player) return null;
+  return (
+    <div className="flex items-center gap-2">
+      <PlayerPhoto player={player} size={36} rounded />
+      <div className="min-w-0">
+        <div className={`font-semibold truncate ${compact ? "text-xs" : "text-sm"}`}>{player.name}</div>
+        <div className="text-[10px] opacity-60 truncate">{player.club} · {player.era}</div>
+      </div>
+    </div>
+  );
+}
+function CountdownBar({ deadlineTs, now }) {
+  const total = LOT_DURATION_MS;
+  const left = Math.max(0, deadlineTs - now);
+  const pct = Math.max(0, Math.min(100, (left / total) * 100));
+  const color = pct > 50 ? "#3FA796" : pct > 20 ? "#E8B23D" : "#D64545";
+  return (
+    <div className="w-full h-2.5 rounded-full overflow-hidden" style={{ background: "#151E30" }}>
+      <div style={{ width: `${pct}%`, background: color, transition: "width 0.2s linear" }} className="h-full" />
+    </div>
+  );
+}
+
+/* =========================================================================
+   HOME SCREEN
+========================================================================= */
+function HomeScreen({ onCreate, onJoin }) {
+  const [name, setName] = useState(localStorage.getItem(PERSONAL_NAME_KEY) || "");
+  const [codeInput, setCodeInput] = useState("");
+  const [mode, setMode] = useState("create");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!name.trim()) { setError("Enter a manager name first."); return; }
+    setBusy(true); setError("");
+    try {
+      if (mode === "create") await onCreate(name.trim());
+      else {
+        if (!codeInput.trim()) { setError("Enter a room code."); setBusy(false); return; }
+        const ok = await onJoin(codeInput.trim().toUpperCase(), name.trim());
+        if (!ok) { setError("Room not found, or the auction already started."); setBusy(false); return; }
+      }
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="min-h-full flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-8">
+          <div className="text-5xl mb-2">⚽</div>
+          <h1 className="font-display text-3xl md:text-4xl" style={{ color: "#E8B23D" }}>PREM AUCTION LEAGUE</h1>
+          <p className="opacity-60 text-sm mt-2">Bid for real Premier League legends 1992-present, build your XI, battle it out home &amp; away.</p>
+        </div>
+        <div style={{ background: "#101A2E" }} className="rounded-2xl p-5 border border-white/5">
+          <label className="text-xs uppercase tracking-wide opacity-60 font-bold">Manager name</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sir Alex"
+            className="w-full mt-1.5 mb-4 px-3 py-2.5 rounded-lg bg-[#070C16] border border-white/10 outline-none focus:border-[#E8B23D] text-sm" />
+
+          <div className="flex gap-2 mb-4">
+            <button onClick={() => setMode("create")} className={`flex-1 py-2 rounded-lg text-sm font-bold transition ${mode === "create" ? "bg-[#E8B23D] text-[#0A0F1A]" : "bg-white/5 text-white/70"}`}>Create Room</button>
+            <button onClick={() => setMode("join")} className={`flex-1 py-2 rounded-lg text-sm font-bold transition ${mode === "join" ? "bg-[#E8B23D] text-[#0A0F1A]" : "bg-white/5 text-white/70"}`}>Join Room</button>
+          </div>
+
+          {mode === "join" && (
+            <input value={codeInput} onChange={(e) => setCodeInput(e.target.value.toUpperCase())} placeholder="ROOM CODE" maxLength={5}
+              className="w-full mb-4 px-3 py-2.5 rounded-lg bg-[#070C16] border border-white/10 outline-none focus:border-[#E8B23D] text-sm font-mono tracking-[0.3em] text-center" />
+          )}
+
+          {error && <div className="text-[#D64545] text-xs mb-3">{error}</div>}
+
+          <button onClick={submit} disabled={busy}
+            style={{ background: "#3FA796" }} className="w-full py-2.5 rounded-lg font-bold text-[#0A0F1A] active:scale-95 transition disabled:opacity-50">
+            {busy ? "…" : mode === "create" ? "Create & Enter Lobby" : "Join Lobby"}
+          </button>
+        </div>
+        <p className="text-center text-[11px] opacity-40 mt-4">2-10 players · solo play adds an AI opponent automatically</p>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================================
+   LOBBY SCREEN
+========================================================================= */
+function FormationCard({ fKey, selected, onSelect }) {
+  const f = FORMATIONS[fKey];
+  return (
+    <button onClick={() => onSelect(fKey)}
+      className={`text-left rounded-xl p-3 border transition ${selected ? "border-[#E8B23D] bg-[#E8B23D]/10" : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"}`}>
+      <div className="flex items-center justify-between">
+        <span className="font-mono font-black text-sm">{f.label}</span>
+        <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full" style={{ background: "#3FA79622", color: "#3FA796" }}>{f.tag}</span>
+      </div>
+      <div className="text-[11px] opacity-60 mt-1 leading-snug">{f.desc}</div>
+      <div className="text-[10px] font-mono opacity-50 mt-1.5">GK {f.counts.GK} · DEF {f.counts.DEF} · MID {f.counts.MID} · FWD {f.counts.FWD}</div>
+    </button>
+  );
+}
+function LobbyScreen({ room, myId, onUpdateBudget, onSetFormation, onStart, onLeave }) {
+  const isHost = room.hostId === myId;
+  const [budget, setBudget] = useState(room.budget);
+  const myFormation = (room.formations && room.formations[myId]) || DEFAULT_FORMATION;
+  return (
+    <div className="min-h-full p-4 flex items-center justify-center">
+      <div className="w-full max-w-2xl">
+        <div className="text-center mb-6">
+          <div className="text-xs uppercase opacity-50 tracking-wide">Room Code</div>
+          <div className="font-mono font-black text-4xl tracking-[0.35em]" style={{ color: "#E8B23D" }}>{room.code}</div>
+          <div className="text-xs opacity-50 mt-1">Share this code so friends can join</div>
+        </div>
+        <div style={{ background: "#101A2E" }} className="rounded-2xl p-5 border border-white/5 mb-4">
+          <div className="text-xs uppercase tracking-wide opacity-60 font-bold mb-3">Managers ({room.players.length}/10)</div>
+          <div className="flex flex-col gap-2">
+            {room.players.map((m) => {
+              const fKey = (room.formations && room.formations[m.id]) || DEFAULT_FORMATION;
+              return (
+                <div key={m.id} className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-white/5">
+                  <ManagerAvatar manager={m} />
+                  <div className="text-sm font-semibold">{m.name}</div>
+                  <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-white/10 opacity-70">{FORMATIONS[fKey].label}</span>
+                  {m.id === room.hostId && <span className="ml-auto text-[10px] uppercase font-bold opacity-50">Host</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div style={{ background: "#101A2E" }} className="rounded-2xl p-5 border border-white/5 mb-4">
+          <div className="text-xs uppercase tracking-wide opacity-60 font-bold mb-3">Your formation</div>
+          <div className="grid sm:grid-cols-2 gap-2">
+            {Object.keys(FORMATIONS).map((fKey) => (
+              <FormationCard key={fKey} fKey={fKey} selected={fKey === myFormation} onSelect={onSetFormation} />
+            ))}
+          </div>
+        </div>
+        <div style={{ background: "#101A2E" }} className="rounded-2xl p-5 border border-white/5 mb-4">
+          <div className="text-xs uppercase tracking-wide opacity-60 font-bold mb-2">Squad budget per manager</div>
+          <div className="flex items-center gap-3">
+            <input type="range" min="200" max="900" step="25" value={budget} disabled={!isHost}
+              onChange={(e) => setBudget(Number(e.target.value))} onMouseUp={() => isHost && onUpdateBudget(budget)} onTouchEnd={() => isHost && onUpdateBudget(budget)}
+              className="flex-1" />
+            <div className="font-mono font-bold text-lg w-20 text-right" style={{ color: "#E8B23D" }}>{fmtM(budget)}</div>
+          </div>
+          {!isHost && <div className="text-[11px] opacity-50 mt-1">Only the host can change this.</div>}
+        </div>
+        {isHost ? (
+          <button onClick={onStart} style={{ background: "#3FA796" }} className="w-full py-3 rounded-xl font-bold text-[#0A0F1A] active:scale-95 transition">
+            {room.players.length < 2 ? "Start Solo vs AI" : "Start Auction"}
+          </button>
+        ) : (
+          <div className="text-center text-sm opacity-60 py-3">Waiting for the host to start the auction…</div>
+        )}
+        <button onClick={onLeave} className="w-full py-2 mt-2 text-xs opacity-40 hover:opacity-70">Leave room</button>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================================
+   AUCTION SCREEN
+========================================================================= */
+// Full squad breakdown for one manager — every formation slot shown, empty
+// ones as placeholders — opened from a ManagerCard so anyone can check
+// their own or a rival's progress at any point during the auction.
+function SquadModal({ manager, squad, counts, formationKey, onClose }) {
+  const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
+  squad.forEach((p) => byPos[p.position].push(p));
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(7,12,22,0.85)", zIndex: 60 }}
+      className="flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+      <div style={{ background: "#101A2E" }} className="pal-pop w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl border border-white/10 p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-2">
+            <ManagerAvatar manager={manager} size={28} />
+            <div className="font-display text-lg">{manager.name}</div>
+          </div>
+          <button onClick={onClose} className="text-xs opacity-50 hover:opacity-90 px-2 py-1">✕ Close</button>
+        </div>
+        <div className="text-xs font-mono opacity-60 mb-4">{FORMATIONS[formationKey].label} · {FORMATIONS[formationKey].tag}</div>
+        {["GK", "DEF", "MID", "FWD"].map((pos) => (
+          <div key={pos} className="mb-3">
+            <div className="text-[10px] uppercase font-bold opacity-50 mb-1.5">{POS_LABEL[pos]}s ({byPos[pos].length}/{counts[pos]})</div>
+            <div className="flex flex-col gap-1.5">
+              {byPos[pos].map((p) => <PlayerCard key={p.id} player={p} compact />)}
+              {Array.from({ length: Math.max(0, counts[pos] - byPos[pos].length) }).map((_, i) => (
+                <div key={i} className="flex items-center gap-2 opacity-30">
+                  <div style={{ background: POS_COLOR[pos] }} className="w-9 h-9 rounded-lg flex items-center justify-center text-[11px] font-black text-[#0A0F1A]">{pos}</div>
+                  <div className="text-xs italic">Empty slot</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+function ManagerCard({ manager, squad, budget, counts, isMe, currentBidderId, onView }) {
+  const c = positionCounts(squad);
+  const leading = manager.id === currentBidderId;
+  return (
+    <button onClick={onView}
+      className={`text-left w-full rounded-xl p-3 border transition hover:bg-white/[0.05] ${leading ? "border-[#E8B23D]" : "border-white/5"} ${isMe ? "bg-white/[0.06]" : "bg-white/[0.02]"}`}>
+      <div className="flex items-center gap-2 mb-2">
+        <ManagerAvatar manager={manager} size={26} />
+        <div className="text-xs font-bold truncate flex-1">{manager.name}{isMe ? " (you)" : ""}</div>
+        {leading && <span className="text-[9px] font-black uppercase" style={{ color: "#E8B23D" }}>Leading</span>}
+      </div>
+      <div className="font-mono text-sm font-bold" style={{ color: "#3FA796" }}>{fmtM(budget)}</div>
+      <div className="flex gap-1 mt-1.5 text-[9px] font-bold opacity-70">
+        <span>GK {c.GK}/{counts.GK}</span><span>DEF {c.DEF}/{counts.DEF}</span><span>MID {c.MID}/{counts.MID}</span><span>FWD {c.FWD}/{counts.FWD}</span>
+        <span className="ml-auto">{squad.length}/11</span>
+      </div>
+      <div className="text-[9px] opacity-40 mt-1">Tap to view squad</div>
+    </button>
+  );
+}
+function StatBar({ label, value }) {
+  return (
+    <div>
+      <div className="flex justify-between text-[10px] mb-0.5">
+        <span className="opacity-60 uppercase font-bold tracking-wide">{label}</span>
+        <span className="font-mono font-bold">{value}</span>
+      </div>
+      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "#151E30" }}>
+        <div style={{ width: `${value}%`, background: value >= 85 ? "#E8B23D" : value >= 70 ? "#3FA796" : "#4C8BF5" }} className="h-full" />
+      </div>
+    </div>
+  );
+}
+function AuctionScreen({ room, myId, onBid, onPass, now }) {
+  const [viewingId, setViewingId] = useState(null);
+  const lot = room.currentLot;
+  const player = lot ? PLAYERS_BY_ID[lot.footballerId] : null;
+  const me = room.players.find((m) => m.id === myId);
+  const mySquad = room.squads[myId] || [];
+  const myBudget = room.remainingBudget[myId] || 0;
+  const myCounts = countsFor(room, myId);
+  if (!lot || !player) {
+    return <div className="min-h-full flex items-center justify-center opacity-60">Resolving lot…</div>;
+  }
+  const askAmount = nextBidAmount(lot.currentBid, lot.basePrice);
+  const iPassed = lot.passed.includes(myId);
+  const iAmLeading = lot.currentBidderId === myId;
+  const canIBid = !iPassed && !iAmLeading && canBid(mySquad, myBudget, player, askAmount, myCounts);
+  const leader = lot.currentBidderId ? room.players.find((m) => m.id === lot.currentBidderId) : null;
+  const stats = detailedStats(player);
+  const viewingManager = viewingId ? room.players.find((m) => m.id === viewingId) : null;
+
+  return (
+    <div className="min-h-full p-3 md:p-5 max-w-6xl mx-auto">
+      <div className="flex items-center justify-between mb-3 text-xs opacity-60">
+        <div>Lot #{lot.lotNumber} of {room.pool.length}</div>
+        <div>Your formation: <span className="font-mono opacity-90">{FORMATIONS[(room.formations && room.formations[myId]) || DEFAULT_FORMATION].label}</span></div>
+        <div className="font-mono">Room {room.code}</div>
+      </div>
+      <div className="grid md:grid-cols-[1fr_300px] gap-4">
+        <div style={{ background: "#101A2E" }} className="rounded-2xl p-5 border border-white/5">
+          <div key={player.id} className="pal-pop flex flex-col items-center text-center gap-2 py-4">
+            <PlayerPhoto player={player} size={112} rounded />
+            <div className="font-display text-3xl mt-1">{player.name}</div>
+            <div className="opacity-60 text-sm">{player.club} · {player.era}</div>
+            <div className="flex items-center gap-2 mt-1">
+              <TierBadge tier={player.tier} />
+              <span className="font-mono text-2xl font-black" style={{ color: "#E8B23D" }}>{player.rating}</span>
+              <span className="font-mono text-xs opacity-50">Base {fmtM(player.basePrice)}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 w-full max-w-xs mt-3">
+              {Object.entries(stats).map(([k, v]) => <StatBar key={k} label={STAT_LABEL[k]} value={v} />)}
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-col items-center gap-2">
+            <div className="text-xs uppercase opacity-50 tracking-wide">Current bid</div>
+            <div className="font-mono font-black text-4xl" style={{ color: "#E8B23D" }}>{fmtM(lot.currentBid ?? lot.basePrice)}</div>
+            <div className="text-xs opacity-70 h-4">{leader ? `${leader.name} is leading` : "No bids yet"}</div>
+          </div>
+
+          <div className="mt-4 max-w-sm mx-auto">
+            <CountdownBar deadlineTs={lot.deadlineTs} now={now} />
+          </div>
+
+          <div className="mt-5 flex gap-3 justify-center">
+            <button onClick={() => onBid(askAmount)} disabled={!canIBid}
+              style={{ background: canIBid ? "#3FA796" : "#1c2536" }}
+              className={`px-6 py-3 rounded-xl font-bold ${canIBid ? "text-[#0A0F1A] active:scale-95 pal-pulse" : "text-white/30 cursor-not-allowed"} transition`}>
+              Bid {fmtM(askAmount)}
+            </button>
+            <button onClick={onPass} disabled={iPassed || iAmLeading}
+              className={`px-6 py-3 rounded-xl font-bold border ${iPassed || iAmLeading ? "opacity-30 cursor-not-allowed border-white/10" : "border-white/20 hover:bg-white/5"}`}>
+              Pass
+            </button>
+          </div>
+          {!me ? null : iPassed ? (
+            <div className="text-center text-xs opacity-50 mt-2">You passed on this lot.</div>
+          ) : !canIBid && !iAmLeading ? (
+            <div className="text-center text-xs opacity-50 mt-2">You can't bid — this position is full for your {FORMATIONS[(room.formations && room.formations[myId]) || DEFAULT_FORMATION].label} squad, or budget won't stretch to it.</div>
+          ) : null}
+
+          <div className="mt-6">
+            <div className="text-xs uppercase opacity-50 tracking-wide mb-2">Recent lots</div>
+            <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto pr-1">
+              {room.soldLog.slice(0, 8).map((entry, i) => {
+                const p = PLAYERS_BY_ID[entry.footballerId];
+                const buyer = entry.buyerId ? room.players.find((m) => m.id === entry.buyerId) : null;
+                return (
+                  <div key={i} className="flex items-center justify-between text-xs bg-white/[0.03] rounded-lg px-3 py-1.5">
+                    <span className="opacity-80 truncate">{p.name}</span>
+                    {buyer ? (
+                      <span className="font-mono font-bold" style={{ color: "#3FA796" }}>{fmtM(entry.price)} → {buyer.name}</span>
+                    ) : (
+                      <span className="font-mono font-bold opacity-40">UNSOLD</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2 max-h-[75vh] overflow-y-auto pr-1">
+          {room.players.map((m) => (
+            <ManagerCard key={m.id} manager={m} squad={room.squads[m.id] || []} budget={room.remainingBudget[m.id] || 0}
+              counts={countsFor(room, m.id)} isMe={m.id === myId} currentBidderId={lot.currentBidderId} onView={() => setViewingId(m.id)} />
+          ))}
+        </div>
+      </div>
+      {viewingManager && (
+        <SquadModal manager={viewingManager} squad={room.squads[viewingManager.id] || []} counts={countsFor(room, viewingManager.id)}
+          formationKey={(room.formations && room.formations[viewingManager.id]) || DEFAULT_FORMATION} onClose={() => setViewingId(null)} />
+      )}
+    </div>
+  );
+}
+
+/* =========================================================================
+   LEAGUE SCREEN
+========================================================================= */
+function TableView({ room }) {
+  const table = computeTable(room.players.map((p) => p.id), room.fixtures);
+  const nameOf = (id) => room.players.find((m) => m.id === id)?.name || "?";
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs md:text-sm">
+        <thead>
+          <tr className="text-left opacity-50 uppercase text-[10px]">
+            <th className="py-1.5 pr-2">#</th><th className="py-1.5 pr-2">Team</th>
+            <th className="py-1.5 px-1 text-center">P</th><th className="py-1.5 px-1 text-center">W</th>
+            <th className="py-1.5 px-1 text-center">D</th><th className="py-1.5 px-1 text-center">L</th>
+            <th className="py-1.5 px-1 text-center">GF</th><th className="py-1.5 px-1 text-center">GA</th>
+            <th className="py-1.5 px-1 text-center">GD</th><th className="py-1.5 pl-2 text-center">Pts</th>
+          </tr>
+        </thead>
+        <tbody>
+          {table.map((row, i) => (
+            <tr key={row.id} className={`border-t border-white/5 ${row.id === room.__myId ? "bg-white/[0.05]" : ""}`}>
+              <td className="py-2 pr-2 font-mono opacity-60">{i + 1}</td>
+              <td className="py-2 pr-2 font-semibold">{nameOf(row.id)}</td>
+              <td className="text-center opacity-70">{row.played}</td>
+              <td className="text-center opacity-70">{row.won}</td>
+              <td className="text-center opacity-70">{row.draw}</td>
+              <td className="text-center opacity-70">{row.lost}</td>
+              <td className="text-center opacity-70">{row.gf}</td>
+              <td className="text-center opacity-70">{row.ga}</td>
+              <td className="text-center opacity-70">{row.gf - row.ga}</td>
+              <td className="text-center font-mono font-black" style={{ color: "#E8B23D" }}>{row.pts}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+function FixtureRow({ fixture, room, onSimulate }) {
+  const home = room.players.find((m) => m.id === fixture.home);
+  const away = room.players.find((m) => m.id === fixture.away);
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="bg-white/[0.03] rounded-lg px-3 py-2">
+      <div className="flex items-center gap-2 text-sm">
+        <span className="flex-1 text-right font-semibold truncate">{home?.name}</span>
+        {fixture.played ? (
+          <button onClick={() => setOpen((o) => !o)} className="font-mono font-black px-2" style={{ color: "#E8B23D" }}>
+            {fixture.homeGoals} - {fixture.awayGoals}
+          </button>
+        ) : (
+          <span className="opacity-40 font-mono px-2">vs</span>
+        )}
+        <span className="flex-1 truncate">{away?.name}</span>
+        {!fixture.played && (
+          <button onClick={() => onSimulate(fixture.id)} style={{ background: "#3FA796" }} className="text-[#0A0F1A] text-xs font-bold px-3 py-1 rounded-lg active:scale-95">
+            Simulate
+          </button>
+        )}
+      </div>
+      {open && fixture.played && (
+        <div className="mt-2 pl-2 border-l-2 border-white/10 flex flex-col gap-0.5 text-[11px] opacity-70">
+          {fixture.log.map((l, i) => <div key={i}>{l}</div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+function LeagueScreen({ room, myId, onSimulate, onSimulateAll, onPlayAgain }) {
+  const unplayed = room.fixtures.filter((f) => !f.played);
+  const table = computeTable(room.players.map((p) => p.id), room.fixtures);
+  const champion = unplayed.length === 0 ? table[0] : null;
+  const mySquad = room.squads[myId] || [];
+  return (
+    <div className="min-h-full p-3 md:p-5 max-w-5xl mx-auto">
+      {champion && <ChampionBanner champion={room.players.find((m) => m.id === champion.id)} onPlayAgain={onPlayAgain} isHost={room.hostId === myId} />}
+      <div className="grid md:grid-cols-[1fr_320px] gap-4">
+        <div style={{ background: "#101A2E" }} className="rounded-2xl p-4 border border-white/5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-xs uppercase tracking-wide opacity-60 font-bold">League Table</div>
+            <div className="text-[11px] opacity-50">{room.fixtures.filter((f) => f.played).length}/{room.fixtures.length} played</div>
+          </div>
+          <TableView room={{ ...room, __myId: myId }} />
+        </div>
+        <div style={{ background: "#101A2E" }} className="rounded-2xl p-4 border border-white/5 flex flex-col">
+          <div className="text-xs uppercase tracking-wide opacity-60 font-bold mb-2">My Squad</div>
+          <div className="flex flex-col gap-1.5 overflow-y-auto max-h-56 pr-1 mb-3">
+            {mySquad.map((p) => <PlayerCard key={p.id} player={p} compact />)}
+          </div>
+          {unplayed.length > 0 && (
+            <button onClick={onSimulateAll} style={{ background: "#E8B23D" }} className="w-full py-2 rounded-lg font-bold text-[#0A0F1A] active:scale-95 mb-3">
+              Simulate All Remaining ({unplayed.length})
+            </button>
+          )}
+          <div className="text-xs uppercase tracking-wide opacity-60 font-bold mb-2">Fixtures</div>
+          <div className="flex flex-col gap-1.5 overflow-y-auto pr-1" style={{ maxHeight: 320 }}>
+            {room.fixtures.map((f) => <FixtureRow key={f.id} fixture={f} room={room} onSimulate={onSimulate} />)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+function ChampionBanner({ champion, onPlayAgain, isHost }) {
+  const confetti = useMemo(() => Array.from({ length: 40 }, (_, i) => ({
+    left: Math.random() * 100, delay: Math.random() * 1.5, dur: 2.2 + Math.random() * 1.6,
+    color: MANAGER_COLORS[i % MANAGER_COLORS.length],
+  })), []);
+  return (
+    <div style={{ background: "linear-gradient(135deg,#1a2440,#101A2E)" }} className="relative overflow-hidden rounded-2xl p-6 mb-4 border border-[#E8B23D]/40 text-center pal-pop">
+      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}>
+        {confetti.map((c, i) => (
+          <div key={i} className="pal-confetti" style={{ position: "absolute", left: `${c.left}%`, top: "-10%", width: 6, height: 10, background: c.color, animationDelay: `${c.delay}s`, animationDuration: `${c.dur}s` }} />
+        ))}
+      </div>
+      <div className="text-5xl mb-2">🏆</div>
+      <div className="font-display text-2xl md:text-3xl" style={{ color: "#E8B23D" }}>{champion?.name} WINS THE LEAGUE!</div>
+      <div className="opacity-60 text-sm mt-1">Top of the table after every fixture played.</div>
+      {isHost && (
+        <button onClick={onPlayAgain} style={{ background: "#3FA796" }} className="mt-4 px-5 py-2 rounded-lg font-bold text-[#0A0F1A] active:scale-95">
+          Play Again (new auction, same room)
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* =========================================================================
+   ROOT APP
+========================================================================= */
+function PremAuctionLeague() {
+  const [myId] = useState(() => {
+    let id = localStorage.getItem(PERSONAL_ID_KEY);
+    if (!id) { id = genId(); localStorage.setItem(PERSONAL_ID_KEY, id); }
+    return id;
+  });
+  const [code, setCode] = useState(() => localStorage.getItem(ACTIVE_ROOM_KEY) || null);
+  const [room, setRoom] = useState(null);
+  const [now, setNow] = useState(Date.now());
+  const roomRef = useRef(null);
+  roomRef.current = room;
+  const resolvingRef = useRef(false);
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(t);
+  }, []);
+
+  // Poll shared room state.
+  useEffect(() => {
+    if (!code) return;
+    let alive = true;
+    const tick = async () => {
+      const data = await storageGet(roomKey(code));
+      if (alive && data) setRoom(data);
+    };
+    tick();
+    const t = setInterval(tick, 800);
+    return () => { alive = false; clearInterval(t); };
+  }, [code]);
+
+  // Auto-resolve auction lots (timer/pass-out) and drive AI bidding — any
+  // connected tab can do this, guarded by rev so concurrent writers never
+  // corrupt state; a losing write just gets picked up fresh next tick.
+  // Runs on its own fixed interval rather than depending on `room`/`now`
+  // (both of which change every ~250ms from the countdown re-render) —
+  // depending on those would tear down and reschedule this tick before it
+  // ever got a chance to fire.
+  useEffect(() => {
+    if (!code || !room || room.status !== "auction") return;
+    const run = async () => {
+      if (resolvingRef.current) return;
+      const fresh = roomRef.current;
+      if (!fresh || fresh.status !== "auction" || !fresh.currentLot) return;
+      if (lotShouldResolve(fresh)) {
+        resolvingRef.current = true;
+        try {
+          const updated = advanceAuction(fresh);
+          await commitIfRevMatches(roomKey(code), fresh, { ...updated, rev: fresh.rev + 1 });
+        } finally {
+          resolvingRef.current = false;
+        }
+        return;
+      }
+      const lot = fresh.currentLot;
+      const player = PLAYERS_BY_ID[lot.footballerId];
+      const aiCandidates = fresh.players.filter((m) => m.isAI && m.id !== lot.currentBidderId && !lot.passed.includes(m.id));
+      for (const ai of aiCandidates) {
+        const squad = fresh.squads[ai.id] || [];
+        const budget = fresh.remainingBudget[ai.id] || 0;
+        const decision = aiDecision(ai, squad, budget, player, lot.currentBid, lot.basePrice, countsFor(fresh, ai.id));
+        if (decision != null) {
+          const updated = { ...fresh, currentLot: { ...lot, currentBid: decision, currentBidderId: ai.id, deadlineTs: Date.now() + LOT_DURATION_MS, passed: lot.passed.filter((id) => id !== ai.id) } };
+          await commitIfRevMatches(roomKey(code), fresh, { ...updated, rev: fresh.rev + 1 });
+        } else if (!lot.passed.includes(ai.id)) {
+          const updated = { ...fresh, currentLot: { ...lot, passed: [...lot.passed, ai.id] } };
+          await commitIfRevMatches(roomKey(code), fresh, { ...updated, rev: fresh.rev + 1 });
+        }
+        break; // one AI action per tick keeps writes serialized & readable
+      }
+    };
+    const t = setInterval(run, 700);
+    return () => clearInterval(t);
+  }, [code, room && room.status]);
+
+  const persistActiveRoom = (c) => {
+    if (c) localStorage.setItem(ACTIVE_ROOM_KEY, c); else localStorage.removeItem(ACTIVE_ROOM_KEY);
+  };
+
+  const createRoom = async (name) => {
+    localStorage.setItem(PERSONAL_NAME_KEY, name);
+    const newCode = genCode();
+    const me = { id: myId, name, isAI: false, colorIdx: 0 };
+    const initial = {
+      code: newCode, rev: 1, status: "lobby", hostId: myId, budget: 550,
+      players: [me], squads: { [myId]: [] }, remainingBudget: { [myId]: 550 },
+      formations: { [myId]: DEFAULT_FORMATION },
+      pool: [], lotIndex: -1, currentLot: null, soldLog: [], unsoldIds: [],
+      fixtures: [],
+    };
+    await storageSet(roomKey(newCode), initial);
+    persistActiveRoom(newCode);
+    setCode(newCode);
+    setRoom(initial);
+  };
+
+  const joinRoom = async (joinCode, name) => {
+    const existing = await storageGet(roomKey(joinCode));
+    if (!existing || existing.status !== "lobby") return false;
+    if (existing.players.some((p) => p.id === myId)) {
+      persistActiveRoom(joinCode); setCode(joinCode); setRoom(existing); return true;
+    }
+    if (existing.players.length >= 10) return false;
+    localStorage.setItem(PERSONAL_NAME_KEY, name);
+    const me = { id: myId, name, isAI: false, colorIdx: existing.players.length };
+    const updated = {
+      ...existing, rev: existing.rev + 1,
+      players: [...existing.players, me],
+      squads: { ...existing.squads, [myId]: [] },
+      remainingBudget: { ...existing.remainingBudget, [myId]: existing.budget },
+      formations: { ...existing.formations, [myId]: DEFAULT_FORMATION },
+    };
+    const ok = await commitIfRevMatches(roomKey(joinCode), existing, updated);
+    if (!ok) return false;
+    persistActiveRoom(joinCode); setCode(joinCode); setRoom(updated);
+    return true;
+  };
+
+  const updateBudget = async (budget) => {
+    const fresh = roomRef.current; if (!fresh) return;
+    const remainingBudget = {};
+    fresh.players.forEach((p) => (remainingBudget[p.id] = budget));
+    const updated = { ...fresh, budget, remainingBudget, rev: fresh.rev + 1 };
+    setRoom(updated);
+    await commitIfRevMatches(roomKey(code), fresh, updated);
+  };
+
+  const setFormation = async (formationKey) => {
+    const fresh = roomRef.current; if (!fresh) return;
+    const updated = { ...fresh, formations: { ...fresh.formations, [myId]: formationKey }, rev: fresh.rev + 1 };
+    setRoom(updated);
+    await commitIfRevMatches(roomKey(code), fresh, updated);
+  };
+
+  const startAuction = async () => {
+    const fresh = roomRef.current; if (!fresh) return;
+    let players = fresh.players;
+    let squads = { ...fresh.squads };
+    let remainingBudget = { ...fresh.remainingBudget };
+    let formations = { ...fresh.formations };
+    if (players.length < 2) {
+      const bot = { id: "AI_" + genId(), name: AI_NAMES[Math.floor(Math.random() * AI_NAMES.length)], isAI: true, colorIdx: players.length };
+      players = [...players, bot];
+      squads[bot.id] = [];
+      remainingBudget[bot.id] = fresh.budget;
+      formations[bot.id] = randomFormationKey();
+    }
+    const pool = shuffle(PLAYERS.map((p) => p.id));
+    const updated = {
+      ...fresh, players, squads, remainingBudget, formations, status: "auction",
+      pool, lotIndex: 0, currentLot: makeLot(pool[0], 1), soldLog: [], unsoldIds: [],
+    };
+    await commitIfRevMatches(roomKey(code), fresh, { ...updated, rev: fresh.rev + 1 });
+  };
+
+  // Bid/pass update local state immediately (optimistic) so the click
+  // feels instant, then fire the network commit in the background — the
+  // next poll (or a failed rev match) reconciles with server truth, so a
+  // lost race just self-heals a moment later instead of blocking the UI.
+  const placeBid = async (amount) => {
+    const fresh = roomRef.current; if (!fresh || !fresh.currentLot) return;
+    const lot = fresh.currentLot;
+    const player = PLAYERS_BY_ID[lot.footballerId];
+    const squad = fresh.squads[myId] || [];
+    const budget = fresh.remainingBudget[myId] || 0;
+    if (!canBid(squad, budget, player, amount, countsFor(fresh, myId))) return;
+    const updated = { ...fresh, currentLot: { ...lot, currentBid: amount, currentBidderId: myId, deadlineTs: Date.now() + LOT_DURATION_MS, passed: lot.passed.filter((id) => id !== myId) }, rev: fresh.rev + 1 };
+    setRoom(updated);
+    await commitIfRevMatches(roomKey(code), fresh, updated);
+  };
+  const passLot = async () => {
+    const fresh = roomRef.current; if (!fresh || !fresh.currentLot) return;
+    const lot = fresh.currentLot;
+    if (lot.passed.includes(myId)) return;
+    const updated = { ...fresh, currentLot: { ...lot, passed: [...lot.passed, myId] }, rev: fresh.rev + 1 };
+    setRoom(updated);
+    await commitIfRevMatches(roomKey(code), fresh, updated);
+  };
+
+  const simulateOne = async (fixtureId) => {
+    const fresh = roomRef.current; if (!fresh) return;
+    const fixture = fresh.fixtures.find((f) => f.id === fixtureId);
+    if (!fixture || fixture.played) return;
+    const homeM = fresh.players.find((m) => m.id === fixture.home);
+    const awayM = fresh.players.find((m) => m.id === fixture.away);
+    const result = simulateFixture(fresh.squads[fixture.home] || [], fresh.squads[fixture.away] || [], homeM.name, awayM.name,
+      fresh.formations[fixture.home], fresh.formations[fixture.away]);
+    const fixtures = fresh.fixtures.map((f) => f.id === fixtureId ? { ...f, played: true, homeGoals: result.homeGoals, awayGoals: result.awayGoals, log: result.log } : f);
+    const updated = { ...fresh, fixtures };
+    await commitIfRevMatches(roomKey(code), fresh, { ...updated, rev: fresh.rev + 1 });
+  };
+  const simulateAll = async () => {
+    let fresh = roomRef.current; if (!fresh) return;
+    let fixtures = [...fresh.fixtures];
+    fixtures = fixtures.map((f) => {
+      if (f.played) return f;
+      const homeM = fresh.players.find((m) => m.id === f.home);
+      const awayM = fresh.players.find((m) => m.id === f.away);
+      const result = simulateFixture(fresh.squads[f.home] || [], fresh.squads[f.away] || [], homeM.name, awayM.name,
+        fresh.formations[f.home], fresh.formations[f.away]);
+      return { ...f, played: true, homeGoals: result.homeGoals, awayGoals: result.awayGoals, log: result.log };
+    });
+    const updated = { ...fresh, fixtures };
+    await commitIfRevMatches(roomKey(code), fresh, { ...updated, rev: fresh.rev + 1 });
+  };
+
+  const playAgain = async () => {
+    const fresh = roomRef.current; if (!fresh) return;
+    const squads = {}; const remainingBudget = {};
+    fresh.players.forEach((p) => { squads[p.id] = []; remainingBudget[p.id] = fresh.budget; });
+    const updated = { ...fresh, status: "lobby", squads, remainingBudget, pool: [], lotIndex: -1, currentLot: null, soldLog: [], unsoldIds: [], fixtures: [] };
+    await commitIfRevMatches(roomKey(code), fresh, { ...updated, rev: fresh.rev + 1 });
+  };
+
+  const leaveRoom = () => { persistActiveRoom(null); setCode(null); setRoom(null); };
+
+  if (!code || !room) {
+    return <HomeScreen onCreate={createRoom} onJoin={joinRoom} />;
+  }
+  if (room.status === "lobby") {
+    return <LobbyScreen room={room} myId={myId} onUpdateBudget={updateBudget} onSetFormation={setFormation} onStart={startAuction} onLeave={leaveRoom} />;
+  }
+  if (room.status === "auction") {
+    return <AuctionScreen room={room} myId={myId} onBid={placeBid} onPass={passLot} now={now} />;
+  }
+  if (room.status === "league") {
+    return <LeagueScreen room={room} myId={myId} onSimulate={simulateOne} onSimulateAll={simulateAll} onPlayAgain={playAgain} />;
+  }
+  return null;
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<PremAuctionLeague />);
+</script>
+<script>
+  // Babel Standalone's default "react" preset now targets the automatic
+  // JSX runtime (imports from "react/jsx-runtime"), which doesn't exist
+  // as a global when using the classic React/ReactDOM UMD builds above.
+  // Transform manually with the classic runtime so JSX compiles to
+  // React.createElement calls against the global `React`.
+  (function () {
+    const source = document.getElementById("app-source").textContent;
+    try {
+      const { code } = Babel.transform(source, {
+        presets: [["react", { runtime: "classic" }]],
+      });
+      (0, eval)(code);
+    } catch (e) {
+      document.getElementById("root").innerHTML =
+        '<pre style="color:#D64545;background:#070C16;padding:16px;white-space:pre-wrap;">App failed to start:\n' +
+        (e && e.message ? e.message : String(e)) +
+        "</pre>";
+      console.error(e);
+    }
+  })();
+</script>
+</body>
+</html>

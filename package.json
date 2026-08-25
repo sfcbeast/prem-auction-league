@@ -1,0 +1,13 @@
+{
+  "name": "prem-auction-league",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Online multiplayer Premier League player auction & league sim",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
