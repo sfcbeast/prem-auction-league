@@ -78,7 +78,12 @@ app.put("/api/kv/:key", (req, res) => {
       try { currentRev = JSON.parse(current).rev; } catch { /* leave null */ }
     }
     if (currentRev !== expectedRev) {
-      return res.status(409).json({ error: "rev mismatch", currentRev });
+      // Hand back the current value along with the conflict so a retrying
+      // client doesn't need a separate GET to see what it's now up
+      // against — halves the round trips a retry costs, which matters a
+      // lot once real network latency (not localhost) is in the mix and
+      // several players are actively colliding on the same room.
+      return res.status(409).json({ error: "rev mismatch", currentRev, currentValue: current !== undefined ? current : null });
     }
   }
   store.set(key, value);

@@ -610,6 +610,30 @@ async function storageSet(key, value, shared = true, expectedRev) {
 async function commitIfRevMatches(key, fresh, updated) {
   return await storageSet(key, updated, true, fresh.rev);
 }
+// Same atomic write, but on a 409 it reads the current value straight out
+// of the conflict response instead of returning a plain boolean — a
+// retrying caller (commitWithRetry, below) can then recompute against
+// that immediately with no separate GET. Over a real network (not
+// localhost) that's the difference between a retry costing one round
+// trip and costing two, which is most of what "lag" turned out to be
+// once multiple people were actually colliding on the same lot.
+async function casWrite(key, value, expectedRev) {
+  try {
+    const res = await fetch(`/api/kv/${encodeURIComponent(key)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: JSON.stringify(value), expectedRev }),
+    });
+    if (res.ok) return { ok: true };
+    if (res.status === 409) {
+      const data = await res.json().catch(() => null);
+      let currentValue = null;
+      if (data && data.currentValue) { try { currentValue = JSON.parse(data.currentValue); } catch { /* fall through */ } }
+      return { ok: false, currentValue };
+    }
+    return { ok: false, currentValue: null };
+  } catch (e) { console.error("cas write failed", e); return { ok: false, currentValue: null }; }
+}
 const roomKey = (code) => `pla-room-${code}`;
 const PERSONAL_ID_KEY = "pla-my-id";
 const PERSONAL_NAME_KEY = "pla-my-name";
@@ -1388,10 +1412,14 @@ function PremAuctionLeague() {
       if (!updated) return null;
       const withRev = { ...updated, rev: fresh.rev + 1 };
       setRoom(withRev);
-      const ok = await storageSet(key, withRev, true, fresh.rev);
-      if (ok) return withRev;
-      await new Promise((r) => setTimeout(r, 50 + Math.random() * 90));
-      fresh = await storageGet(key);
+      const result = await casWrite(key, withRev, fresh.rev);
+      if (result.ok) return withRev;
+      if (result.currentValue) {
+        fresh = result.currentValue; // free — came back on the 409 itself
+      } else {
+        await new Promise((r) => setTimeout(r, 50 + Math.random() * 90));
+        fresh = await storageGet(key);
+      }
     }
     return null;
   };
