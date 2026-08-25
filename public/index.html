@@ -777,20 +777,25 @@ function skipCurrentPhase(room) {
   }
   updated = { ...updated, unsoldIds: [...updated.unsoldIds, ...skipped] };
   const allFull = updated.players.every((m) => squadIsComplete(updated.squads[m.id] || [], countsFor(updated, m.id)));
-  if (allFull) {
+  // Skipping the LAST category (forwards) with nothing left in the pool
+  // has to actually reach League, full stop — recycling the just-skipped
+  // players back in as more lots would mean clicking "Skip to League"
+  // just kept the auction going, which looks exactly like the button
+  // doing nothing. Force-fill whatever's still short instead of
+  // re-offering what was just explicitly skipped.
+  const isLastPhase = AUCTION_POSITION_ORDER.indexOf(skippedPos) === AUCTION_POSITION_ORDER.length - 1;
+  if (allFull || (isLastPhase && idx >= room.pool.length)) {
+    if (!allFull) updated = forceFillIncompleteSquads(updated);
     const teamIds = updated.players.map((p) => p.id);
     return { ...updated, status: "league", currentLot: null, fixtures: generateFixtures(teamIds) };
   }
   let pool = room.pool;
   if (idx >= pool.length) {
-    if (updated.unsoldIds.length > 0) {
-      pool = [...pool, ...shuffle(updated.unsoldIds)];
-      updated = { ...updated, unsoldIds: [] };
-    } else {
-      updated = forceFillIncompleteSquads(updated);
-      const teamIds = updated.players.map((p) => p.id);
-      return { ...updated, status: "league", currentLot: null, fixtures: generateFixtures(teamIds) };
-    }
+    // Not the last phase — pool is just temporarily short for a position
+    // that still needs filling later, so recycling unsold/skipped players
+    // back in is the right call here (unlike the last-phase case above).
+    pool = [...pool, ...shuffle(updated.unsoldIds)];
+    updated = { ...updated, unsoldIds: [] };
   }
   const nextPlayerId = pool[idx];
   return { ...updated, pool, lotIndex: idx, currentLot: makeLot(nextPlayerId, idx + 1) };
