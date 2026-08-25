@@ -4,7 +4,13 @@ const fs = require("fs");
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
-app.use(express.static(path.join(__dirname, "public")));
+// No Cache-Control means browsers fall back to heuristic caching, which
+// can keep serving a stale index.html for hours after a deploy ships a
+// fix — force revalidation on every load so players always get the
+// latest game logic.
+app.use(express.static(path.join(__dirname, "public"), {
+  setHeaders: (res) => res.setHeader("Cache-Control", "no-cache"),
+}));
 
 // Simple in-memory key-value store. Mirrors the get/set/delete shape the
 // client used to talk to the Artifacts `window.storage` API, so the game
