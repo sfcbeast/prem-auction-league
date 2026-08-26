@@ -667,6 +667,40 @@ function computeTeamOfTournament(room) {
   if (!bestFormation) return null;
   return { formationKey: bestFormation, squad: bestSquad };
 }
+// Golden Glove: the manager with fewest goals conceded across every
+// played fixture, awarded to the best-rated goalkeeper in their squad.
+function computeGoldenGlove(room) {
+  const table = computeTable(room.players.map((p) => p.id), room.fixtures || []);
+  const played = table.filter((t) => t.played > 0);
+  if (played.length === 0) return null;
+  const best = [...played].sort((a, b) => a.ga - b.ga || b.gf - a.gf)[0];
+  const manager = room.players.find((p) => p.id === best.id);
+  const gk = (room.squads[best.id] || []).filter((p) => p.position === "GK").sort((a, b) => b.rating - a.rating)[0];
+  if (!manager || !gk) return null;
+  return { manager, gk, goalsConceded: best.ga };
+}
+// Signing of the Season: the auctioned (not force-filled) player with the
+// best goals-per-£M spent among everyone who actually scored — the
+// "what a bargain" narrative. Falls back to rating-per-£M if nobody
+// bought this tournament found the net.
+function computeSigningOfTheSeason(room) {
+  const tally = computeGoalTally(room.fixtures || []);
+  const sold = (room.soldLog || []).filter((e) => e.buyerId && e.price > 0);
+  if (sold.length === 0) return null;
+  const withGoals = sold.filter((e) => (tally[e.footballerId] || 0) > 0);
+  const pool = withGoals.length > 0 ? withGoals : sold;
+  let best = null;
+  pool.forEach((entry) => {
+    const player = PLAYERS_BY_ID[entry.footballerId];
+    if (!player) return;
+    const goals = tally[player.id] || 0;
+    const value = withGoals.length > 0 ? goals / entry.price : player.rating / entry.price;
+    if (!best || value > best.value) {
+      best = { player, price: entry.price, goals, manager: room.players.find((m) => m.id === entry.buyerId), value };
+    }
+  });
+  return best;
+}
 
 /* =========================================================================
    AI MANAGER LOGIC — runs entirely client-side, on whichever connected
@@ -801,6 +835,7 @@ function makeLot(footballerId, lotNumber) {
     currentBidderId: null,
     passed: [],
     deadlineTs: Date.now() + LOT_DURATION_MS,
+    raiseCount: 0,
   };
 }
 
@@ -1522,6 +1557,12 @@ function AuctionScreen({ room, myId, onBid, onPass, onSkipPhase, onCloseRoom, no
           </div>
 
           <div className="mt-4 flex flex-col items-center gap-2">
+            {(lot.raiseCount || 0) >= 3 && (
+              <div className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wide pal-pop"
+                style={{ background: "rgba(232,178,61,0.15)", color: "#E8B23D", border: "1px solid rgba(232,178,61,0.4)" }}>
+                🔥 Bidding War{lot.currentBid >= lot.basePrice * 2 ? ` — ${(lot.currentBid / lot.basePrice).toFixed(1)}x base price` : ""}
+              </div>
+            )}
             <div className="text-xs uppercase opacity-50 tracking-wide">Current bid</div>
             <div className="font-mono font-black text-4xl" style={{ color: "#E8B23D" }}>{fmtM(lot.currentBid ?? lot.basePrice)}</div>
             <div className="text-xs opacity-70 h-4">{leader ? `${leader.name} is leading` : "No bids yet"}</div>
@@ -1555,13 +1596,19 @@ function AuctionScreen({ room, myId, onBid, onPass, onSkipPhase, onCloseRoom, no
               {room.soldLog.slice(0, 8).map((entry, i) => {
                 const p = PLAYERS_BY_ID[entry.footballerId];
                 const buyer = entry.buyerId ? room.players.find((m) => m.id === entry.buyerId) : null;
+                const isSteal = buyer && entry.price <= p.basePrice * 1.15;
+                const isBigSpend = buyer && entry.price >= p.basePrice * 2;
                 return (
                   <div key={i} className="flex items-center justify-between text-xs bg-white/[0.03] rounded-lg px-3 py-1.5">
-                    <span className="opacity-80 truncate">{p.name}</span>
+                    <span className="opacity-80 truncate flex items-center gap-1.5">
+                      {p.name}
+                      {isSteal && <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase" style={{ background: "rgba(63,167,150,0.2)", color: "#3FA796" }}>Steal</span>}
+                      {isBigSpend && <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase" style={{ background: "rgba(232,178,61,0.2)", color: "#E8B23D" }}>Big Spend</span>}
+                    </span>
                     {buyer ? (
-                      <span className="font-mono font-bold" style={{ color: "#3FA796" }}>{fmtM(entry.price)} → {buyer.name}</span>
+                      <span className="font-mono font-bold shrink-0 pl-2" style={{ color: "#3FA796" }}>{fmtM(entry.price)} → {buyer.name}</span>
                     ) : (
-                      <span className="font-mono font-bold opacity-40">UNSOLD</span>
+                      <span className="font-mono font-bold opacity-40 shrink-0 pl-2">UNSOLD</span>
                     )}
                   </div>
                 );
@@ -1716,6 +1763,8 @@ function LeagueScreen({ room, myId, onSimulate, onSimulateAll, onPlayAgain, onCl
   const table = computeTable(room.players.map((p) => p.id), room.fixtures);
   const champion = unplayed.length === 0 ? table[0] : null;
   const starPlayer = champion ? computeStarPlayer(room) : null;
+  const goldenGlove = champion ? computeGoldenGlove(room) : null;
+  const signingOfSeason = champion ? computeSigningOfTheSeason(room) : null;
   const teamOfTournament = champion ? computeTeamOfTournament(room) : null;
   const mySquad = room.squads[myId] || [];
   const isHost = room.hostId === myId;
@@ -1726,7 +1775,7 @@ function LeagueScreen({ room, myId, onSimulate, onSimulateAll, onPlayAgain, onCl
         {isHost && <CloseRoomButton onClose={onCloseRoom} />}
       </div>
       {champion && <ChampionBanner champion={room.players.find((m) => m.id === champion.id)} onPlayAgain={onPlayAgain} isHost={room.hostId === myId} />}
-      {champion && <StarPlayerCard star={starPlayer} />}
+      {champion && <AwardsRow star={starPlayer} glove={goldenGlove} signing={signingOfSeason} />}
       {champion && <TeamOfTournament tot={teamOfTournament} />}
       <div className="grid md:grid-cols-[1fr_320px] gap-4">
         <div style={{ background: "#101A2E" }} className="rounded-2xl p-4 border border-white/5">
@@ -1789,20 +1838,39 @@ function ChampionBanner({ champion, onPlayAgain, isHost }) {
     </div>
   );
 }
-function StarPlayerCard({ star }) {
-  if (!star) return null;
-  const { player, goals } = star;
-  return (
-    <div className="relative overflow-hidden rounded-2xl p-4 mb-4 flex items-center gap-4 pal-pop"
-      style={{ background: "linear-gradient(135deg, #12433a 0%, #0a1412 80%)", border: "1px solid rgba(63,167,150,0.5)" }}>
-      <div className="rounded-full p-1 shrink-0" style={{ background: "radial-gradient(circle, rgba(63,167,150,0.45), transparent 72%)" }}>
-        <PlayerPhoto player={player} size={64} rounded />
+// End-of-season awards, side by side: Golden Boot reuses the tournament's
+// top scorer (the old standalone Star Player card), Golden Glove and
+// Signing of the Season are new — see computeGoldenGlove/
+// computeSigningOfTheSeason. Any award missing its data (e.g. nobody
+// scored, or nobody was actually auctioned) just omits its tile.
+function AwardsRow({ star, glove, signing }) {
+  if (!star && !(glove && glove.gk) && !signing) return null;
+  const Tile = ({ color, bg, icon, label, name, sub, photoPlayer }) => (
+    <div className="relative overflow-hidden rounded-2xl p-3 flex items-center gap-3 pal-pop" style={{ background: bg, border: `1px solid ${color}55` }}>
+      <div className="rounded-full p-0.5 shrink-0" style={{ background: `radial-gradient(circle, ${color}45, transparent 72%)` }}>
+        <PlayerPhoto player={photoPlayer} size={48} rounded />
       </div>
       <div className="text-left min-w-0">
-        <div className="text-[10px] font-black uppercase tracking-widest" style={{ color: "#3FA796" }}>⭐ Star Player of the Tournament</div>
-        <div className="font-display text-xl mt-0.5 truncate">{player.name}</div>
-        <div className="text-xs opacity-60">{player.club} · {goals} goal{goals !== 1 ? "s" : ""} scored</div>
+        <div className="text-[9px] font-black uppercase tracking-widest" style={{ color }}>{icon} {label}</div>
+        <div className="font-display text-sm mt-0.5 truncate">{name}</div>
+        <div className="text-[11px] opacity-60 truncate">{sub}</div>
       </div>
+    </div>
+  );
+  return (
+    <div className="grid sm:grid-cols-3 gap-3 mb-4">
+      {star && (
+        <Tile color="#3FA796" bg="linear-gradient(135deg, #12433a 0%, #0a1412 80%)" icon="⚽" label="Golden Boot"
+          name={star.player.name} sub={`${star.goals} goal${star.goals !== 1 ? "s" : ""} · ${star.player.club}`} photoPlayer={star.player} />
+      )}
+      {glove && glove.gk && (
+        <Tile color="#3F9BA7" bg="linear-gradient(135deg, #123a43 0%, #0a1214 80%)" icon="🧤" label="Golden Glove"
+          name={glove.gk.name} sub={`${glove.manager.name} · ${glove.goalsConceded} conceded`} photoPlayer={glove.gk} />
+      )}
+      {signing && (
+        <Tile color="#C48CFF" bg="linear-gradient(135deg, #3D195B 0%, #1a1030 80%)" icon="💰" label="Signing of the Season"
+          name={signing.player.name} sub={`${signing.manager.name} · ${fmtM(signing.price)}${signing.goals > 0 ? ` · ${signing.goals}g` : ""}`} photoPlayer={signing.player} />
+      )}
     </div>
   );
 }
@@ -1911,7 +1979,7 @@ function PremAuctionLeague() {
         const budget = fresh.remainingBudget[ai.id] || 0;
         const decision = aiDecision(ai, squad, budget, player, lot.currentBid, lot.basePrice, countsFor(fresh, ai.id));
         if (decision != null) {
-          const updated = { ...fresh, currentLot: { ...lot, currentBid: decision, currentBidderId: ai.id, deadlineTs: Date.now() + LOT_DURATION_MS, passed: lot.passed.filter((id) => id !== ai.id) } };
+          const updated = { ...fresh, currentLot: { ...lot, currentBid: decision, currentBidderId: ai.id, deadlineTs: Date.now() + LOT_DURATION_MS, passed: lot.passed.filter((id) => id !== ai.id), raiseCount: (lot.raiseCount || 0) + 1 } };
           await commitIfRevMatches(roomKey(code), fresh, { ...updated, rev: fresh.rev + 1 });
         } else if (!lot.passed.includes(ai.id)) {
           const updated = { ...fresh, currentLot: { ...lot, passed: [...lot.passed, ai.id] } };
@@ -2060,7 +2128,7 @@ function PremAuctionLeague() {
       // aborts if that no longer makes sense (position filled elsewhere,
       // budget moved, etc.) rather than blindly reapplying an old bid.
       if (!canBid(squad, budget, player, amount, countsFor(fresh, myId))) return null;
-      return { ...fresh, currentLot: { ...lot, currentBid: amount, currentBidderId: myId, deadlineTs: Date.now() + LOT_DURATION_MS, passed: lot.passed.filter((id) => id !== myId) } };
+      return { ...fresh, currentLot: { ...lot, currentBid: amount, currentBidderId: myId, deadlineTs: Date.now() + LOT_DURATION_MS, passed: lot.passed.filter((id) => id !== myId), raiseCount: (lot.raiseCount || 0) + 1 } };
     });
   };
   const passLot = async () => {
