@@ -1373,6 +1373,12 @@ function FormationCard({ fKey, selected, onSelect }) {
 function LobbyScreen({ room, myId, onUpdateBudget, onSetFormation, onStart, onLeave, onCloseRoom }) {
   const isHost = room.hostId === myId;
   const [budget, setBudget] = useState(room.budget);
+  // room.budget is a prop, not the source of truth for this local slider
+  // state — without this, a non-host viewer's slider (and the £ readout
+  // next to it) freezes at whatever it was when they joined and never
+  // reflects the host changing it afterwards, even though polling keeps
+  // room.budget itself current.
+  useEffect(() => { setBudget(room.budget); }, [room.budget]);
   const [copied, setCopied] = useState(false);
   const myFormation = (room.formations && room.formations[myId]) || DEFAULT_FORMATION;
   const copyCode = () => {
